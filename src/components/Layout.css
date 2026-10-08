@@ -1,0 +1,338 @@
+.site-container {
+  width: min(1180px, calc(100% - 64px));
+  margin: 0 auto;
+}
+
+.topbar {
+  height: 36px;
+  background: var(--deep-green);
+  color: rgba(255, 255, 255, .8);
+  font-size: 11px;
+  letter-spacing: .025em;
+}
+
+.topbar-inner,
+.topbar-details {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topbar-details {
+  gap: 16px;
+}
+
+.topbar-details a:hover,
+.footer-column a:hover {
+  color: var(--lime);
+}
+
+.topbar-divider {
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, .3);
+}
+
+.site-header {
+  position: relative;
+  z-index: 10;
+  background: #fff;
+}
+
+.header-inner {
+  min-height: 83px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.brand-mark {
+  width: 31px;
+  height: 31px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 4px;
+  border: 1.5px solid var(--green);
+}
+
+.brand-mark span {
+  display: block;
+  width: 5px;
+  background: var(--green);
+}
+
+.brand-mark span:nth-child(1) { height: 10px; }
+.brand-mark span:nth-child(2) { height: 17px; }
+.brand-mark span:nth-child(3) { height: 13px; }
+
+.brand-name {
+  font-family: 'Manrope', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -.07em;
+  white-space: nowrap;
+}
+
+.brand-name > span {
+  color: var(--green);
+  font-weight: 500;
+}
+
+.main-nav {
+  height: 83px;
+  display: flex;
+  align-items: center;
+  gap: 34px;
+}
+
+.nav-link {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  position: relative;
+  color: #5d625b;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color .2s ease;
+}
+
+.nav-link::after {
+  content: '';
+  height: 2px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 21px;
+  background: var(--green);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .2s ease;
+}
+
+.nav-link:hover,
+.nav-link-active {
+  color: var(--green);
+}
+
+.nav-link-active::after {
+  transform: scaleX(1);
+}
+
+.nav-cta,
+.button-primary {
+  min-height: 45px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 20px;
+  color: #fff;
+  background: var(--green);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .2s ease, transform .2s ease;
+}
+
+.nav-cta:hover,
+.button-primary:hover {
+  background: var(--deep-green);
+  transform: translateY(-2px);
+}
+
+.nav-cta span {
+  color: var(--lime);
+  font-size: 16px;
+}
+
+.menu-toggle {
+  display: none;
+}
+
+.site-footer {
+  padding: 68px 0 0;
+  background: #1f3025;
+  color: rgba(255, 255, 255, .76);
+}
+
+.footer-main {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.4fr .7fr 1fr;
+  gap: 80px;
+  padding-bottom: 54px;
+}
+
+.footer-brand .brand-mark {
+  border-color: var(--lime);
+}
+
+.footer-brand .brand-mark span {
+  background: var(--lime);
+}
+
+.footer-brand .brand-name {
+  color: white;
+}
+
+.footer-brand .brand-name > span {
+  color: var(--lime);
+}
+
+.footer-about p {
+  max-width: 355px;
+  margin: 20px 0 0;
+  color: rgba(255, 255, 255, .57);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.footer-column {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 13px;
+  font-size: 12px;
+}
+
+.footer-label {
+  margin-bottom: 5px;
+  color: var(--lime);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.footer-column > span:last-child {
+  color: rgba(255, 255, 255, .55);
+}
+
+.footer-contact-link {
+  position: absolute;
+  right: 0;
+  bottom: 50px;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .28);
+  color: var(--lime);
+  font-size: 18px;
+  transition: background .2s ease;
+}
+
+.footer-contact-link:hover {
+  background: rgba(255, 255, 255, .1);
+}
+
+.footer-bottom {
+  min-height: 54px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, .15);
+  color: rgba(255, 255, 255, .48);
+  font-size: 10px;
+}
+
+@media (max-width: 800px) {
+  .site-container { width: min(100% - 40px, 620px); }
+  .header-inner {
+    min-height: 72px;
+    justify-content: flex-start;
+  }
+  .header-inner .brand {
+    margin-right: auto;
+  }
+  .menu-toggle {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--line);
+    background: #fff;
+    cursor: pointer;
+  }
+  .menu-toggle span { width: 17px; height: 1.5px; background: var(--ink); }
+  .main-nav {
+    height: auto;
+    display: none;
+    position: absolute;
+    top: 72px;
+    left: 0;
+    right: 0;
+    padding: 8px 20px 22px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    background: #fff;
+    box-shadow: 0 14px 18px rgba(25, 35, 25, .08);
+  }
+  .main-nav-open { display: flex; }
+  .nav-link { min-height: 46px; }
+  .nav-link::after { display: none; }
+  .nav-cta { margin-top: 8px; }
+  .footer-main { grid-template-columns: 1fr 1fr; gap: 36px 25px; }
+  .footer-about { grid-column: 1 / -1; }
+  .footer-contact-link { bottom: auto; top: 0; }
+}
+
+@media (max-width: 520px) {
+  .site-container { width: calc(100% - 36px); }
+  .topbar { height: 32px; font-size: 10px; }
+  .topbar-details { display: none; }
+  .app-shell .header-inner {
+    min-height: 66px;
+    gap: 10px;
+    justify-content: flex-start;
+  }
+  .app-shell .brand {
+    min-width: 0;
+    margin-right: auto;
+    gap: 9px;
+  }
+  .app-shell .brand-mark {
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+    gap: 3px;
+    padding: 5px;
+    border-radius: 6px;
+  }
+  .app-shell .brand-mark span {
+    width: 6px;
+  }
+  .app-shell .brand-name {
+    min-width: 0;
+    overflow: hidden;
+    font-size: clamp(14px, 4.6vw, 17px);
+    letter-spacing: -.075em;
+    text-overflow: ellipsis;
+  }
+  .app-shell .menu-toggle {
+    flex: 0 0 50px;
+    width: 50px;
+    height: 50px;
+    gap: 6px;
+    border-radius: 0;
+  }
+  .app-shell .menu-toggle span {
+    width: 20px;
+    height: 2px;
+  }
+  .footer-main { grid-template-columns: 1fr; gap: 29px; }
+  .footer-about { grid-column: auto; padding-right: 15px; }
+  .footer-contact-link { top: auto; bottom: -45px; }
+  .footer-bottom { padding: 14px 0; min-height: auto; align-items: flex-start; flex-direction: column; gap: 6px; }
+}
