@@ -1,7 +1,7 @@
-
 const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
+const cors = require("cors");
 
 // Load environment variables from backend/.env
 require("dotenv").config({
@@ -16,6 +16,11 @@ const PORT = 5000;
 const ADMIN_COOKIE = "admin_session";
 const ADMIN_SESSION_SECONDS = 8 * 60 * 60;
 
+// ===============================
+// MIDDLEWARE
+// ===============================
+
+app.use(cors());
 app.use(express.json());
 
 
@@ -345,6 +350,7 @@ app.get(
 // ===============================
 // CONTACT API
 // ===============================
+
 app.post("/api/contact", (req, res) => {
   const {
     name,
@@ -377,7 +383,10 @@ app.post("/api/contact", (req, res) => {
 
   db.query(sql, values, (err, result) => {
     if (err) {
-      console.log("CONTACT MYSQL ERROR:", err);
+      console.log(
+        "CONTACT MYSQL ERROR:",
+        err
+      );
 
       return res.status(500).json({
         message: "Failed to save contact.",
@@ -385,7 +394,10 @@ app.post("/api/contact", (req, res) => {
       });
     }
 
-    console.log("Contact saved successfully. ID:", result.insertId);
+    console.log(
+      "Contact saved successfully. ID:",
+      result.insertId
+    );
 
     res.status(200).json({
       message: "Contact submitted successfully!",
@@ -393,6 +405,7 @@ app.post("/api/contact", (req, res) => {
     });
   });
 });
+
 
 // ===============================
 // FEEDBACK API
