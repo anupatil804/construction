@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import './Admin.css';
 
+const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
+
 const sections = [
   { id: 'contacts', label: 'Enquiries' },
   { id: 'feedback', label: 'Feedback' },
 ];
+
+async function readJsonResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      'The backend did not return JSON. Please check the Railway API URL and backend routes.'
+    );
+  }
+
+  return response.json();
+}
 
 function Admin() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -23,7 +37,9 @@ function Admin() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch('/api/admin/session')
+    fetch(`${API_URL}/api/admin/session`, {
+      credentials: 'include',
+    })
       .then((response) => {
         if (response.ok) {
           if (!cancelled) setAuthenticated(true);
@@ -31,8 +47,12 @@ function Admin() {
           throw new Error('Could not check the admin session.');
         }
       })
-      .catch(() => {
-        if (!cancelled) setLoginError('Could not connect to the admin service. Please try again.');
+      .catch((error) => {
+        if (!cancelled) {
+          setLoginError(
+            error.message || 'Could not connect to the admin service. Please try again.'
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) setCheckingSession(false);
@@ -48,8 +68,12 @@ function Admin() {
     setRecordsError('');
 
     try {
-      const response = await fetch(`/api/admin/${activeSection}`);
-      const result = await response.json();
+      const response = await fetch(
+        `${API_URL}/api/admin/${activeSection}`,
+        { credentials: 'include' }
+      );
+
+      const result = await readJsonResponse(response);
 
       if (response.status === 401) {
         setAuthenticated(false);
@@ -61,34 +85,52 @@ function Admin() {
         throw new Error(result.message || 'Could not load records.');
       }
 
-      setRecords(result.records);
+      setRecords(Array.isArray(result.records) ? result.records : []);
     } catch (error) {
-      setRecordsError(error.message || 'Could not connect to the admin service.');
+      setRecordsError(
+        error.message || 'Could not connect to the admin service.'
+      );
     } finally {
       setLoadingRecords(false);
     }
   }, [activeSection]);
 
   useEffect(() => {
-    if (authenticated) loadRecords();
-  }, [authenticated, loadRecords]);
+    if (authenticated && activeView !== 'dashboard') {
+      loadRecords();
+    }
+  }, [authenticated, activeView, loadRecords]);
 
   useEffect(() => {
     if (!authenticated) return undefined;
 
     let cancelled = false;
-    fetch('/api/admin/summary')
+
+    fetch(`${API_URL}/api/admin/summary`, {
+      credentials: 'include',
+    })
       .then(async (response) => {
-        const result = await response.json();
+        const result = await readJsonResponse(response);
+
         if (response.status === 401) {
           if (!cancelled) setAuthenticated(false);
           return;
         }
-        if (!response.ok) throw new Error(result.message || 'Could not load dashboard summary.');
+
+        if (!response.ok) {
+          throw new Error(
+            result.message || 'Could not load dashboard summary.'
+          );
+        }
+
         if (!cancelled) setSummary(result.summary);
       })
       .catch((error) => {
-        if (!cancelled) setSummaryError(error.message || 'Could not load dashboard summary.');
+        if (!cancelled) {
+          setSummaryError(
+            error.message || 'Could not load dashboard summary.'
+          );
+        }
       });
 
     return () => {
@@ -101,50 +143,85 @@ function Admin() {
     setLoginError('');
 
     try {
-      const response = await fetch('/api/admin/login', {
+      const response = await fetch(`${API_URL}/api/admin/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ username, password }),
       });
-      const result = await response.json();
+
+      const result = await readJsonResponse(response);
 
       if (!response.ok) {
-        setLoginError(result.message || 'Sign-in failed. Please try again.');
+        setLoginError(
+          result.message || 'Sign-in failed. Please try again.'
+        );
         return;
       }
 
       setPassword('');
       setAuthenticated(true);
     } catch (error) {
-      setLoginError('Could not connect to the admin service. Please try again.');
+      setLoginError(
+        error.message || 'Could not connect to the admin service. Please try again.'
+      );
     }
   }
 
   async function handleLogout() {
     try {
-      const response = await fetch('/api/admin/logout', { method: 'POST' });
-      if (!response.ok) throw new Error('Could not sign out.');
+      const response = await fetch(`${API_URL}/api/admin/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Could not sign out.');
+      }
+
       setAuthenticated(false);
       setRecords([]);
       setPassword('');
       setLoginError('');
+      setSummary(null);
+      setSummaryError('');
     } catch (error) {
       setRecordsError(error.message || 'Could not sign out.');
     }
   }
 
+  function openSection(section) {
+    setActiveSection(section);
+    setActiveView(section);
+    setRecordsError('');
+  }
+
   if (checkingSession) {
-    return <main className="admin-page"><p className="admin-loading">Checking admin session…</p></main>;
+    return (
+      <main className="admin-page">
+        <p className="admin-loading">Checking admin session…</p>
+      </main>
+    );
   }
 
   if (!authenticated) {
     return (
       <main className="admin-page admin-login-page">
         <section className="admin-login-card">
-          <a href="/" className="admin-brand">oak &amp; stone<span> / admin</span></a>
+          <a href="/" className="admin-brand">
+            oak &amp; stone<span> / admin</span>
+          </a>
+
           <span className="admin-eyebrow">PRIVATE WORKSPACE</span>
-          <h1>Welcome <em>back.</em></h1>
+
+          <h1>
+            Welcome <em>back.</em>
+          </h1>
+
           <p>Sign in to view project enquiries and client feedback.</p>
+
           <form className="admin-login-form" onSubmit={handleLogin}>
             <label>
               Username
@@ -155,6 +232,7 @@ function Admin() {
                 onChange={(event) => setUsername(event.target.value)}
               />
             </label>
+
             <label>
               Password
               <input
@@ -165,10 +243,21 @@ function Admin() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </label>
-            {loginError && <p className="admin-error" role="alert">{loginError}</p>}
-            <button className="admin-button" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+
+            {loginError && (
+              <p className="admin-error" role="alert">
+                {loginError}
+              </p>
+            )}
+
+            <button className="admin-button" type="submit">
+              Sign in <span aria-hidden="true">↗</span>
+            </button>
           </form>
-          <a className="admin-back-link" href="/">← Back to website</a>
+
+          <a className="admin-back-link" href="/">
+            ← Back to website
+          </a>
         </section>
       </main>
     );
@@ -181,128 +270,395 @@ function Admin() {
     <main className="admin-page">
       <aside className="admin-sidebar">
         <a href="/" className="admin-brand">
-          <span className="admin-brand-mark" aria-hidden="true"><span /><span /><span /></span>
-          <span className="admin-brand-type">oak &amp; stone<span>build / admin</span></span>
+          <span className="admin-brand-mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+
+          <span className="admin-brand-type">
+            oak &amp; stone
+            <span>build / admin</span>
+          </span>
         </a>
+
         <span className="admin-sidebar-label">WORKSPACE</span>
+
         <nav className="admin-sidebar-nav" aria-label="Admin navigation">
           <button
             type="button"
-            className={isDashboard ? 'admin-side-link active' : 'admin-side-link'}
+            className={
+              isDashboard
+                ? 'admin-side-link active'
+                : 'admin-side-link'
+            }
             aria-current={isDashboard ? 'page' : undefined}
             onClick={() => setActiveView('dashboard')}
           >
             <span aria-hidden="true">▦</span> Dashboard
           </button>
+
           {sections.map((section) => {
             const active = activeView === section.id;
-            const count = section.id === 'contacts' ? summary?.enquiries : summary?.feedback;
+            const count =
+              section.id === 'contacts'
+                ? summary?.enquiries
+                : summary?.feedback;
+
             return (
               <button
                 key={section.id}
                 type="button"
-                className={active ? 'admin-side-link active' : 'admin-side-link'}
+                className={
+                  active
+                    ? 'admin-side-link active'
+                    : 'admin-side-link'
+                }
                 aria-current={active ? 'page' : undefined}
-                onClick={() => {
-                  setActiveSection(section.id);
-                  setActiveView(section.id);
-                }}
+                onClick={() => openSection(section.id)}
               >
-                <span aria-hidden="true">{section.id === 'contacts' ? '↗' : '☆'}</span>
+                <span aria-hidden="true">
+                  {section.id === 'contacts' ? '↗' : '☆'}
+                </span>
+
                 {section.label}
-                {count !== undefined && <span className="admin-side-count">{count}</span>}
+
+                {count !== undefined && (
+                  <span className="admin-side-count">{count}</span>
+                )}
               </button>
             );
           })}
         </nav>
+
         <div className="admin-sidebar-bottom">
-          <a href="/" className="admin-sidebar-back">← Back to website</a>
-          <button type="button" className="admin-logout" onClick={handleLogout}>Sign out <span aria-hidden="true">↗</span></button>
+          <a href="/" className="admin-sidebar-back">
+            ← Back to website
+          </a>
+
+          <button
+            type="button"
+            className="admin-logout"
+            onClick={handleLogout}
+          >
+            Sign out <span aria-hidden="true">↗</span>
+          </button>
         </div>
       </aside>
+
       <div className="admin-main">
         <header className="admin-topbar">
-          <span>{isDashboard ? 'Dashboard' : isContacts ? 'Project enquiries' : 'Client feedback'}</span>
-          <span className="admin-topbar-status"><span /> Admin workspace</span>
+          <span>
+            {isDashboard
+              ? 'Dashboard'
+              : isContacts
+                ? 'Project enquiries'
+                : 'Client feedback'}
+          </span>
+
+          <span className="admin-topbar-status">
+            <span /> Admin workspace
+          </span>
         </header>
+
         <section className="admin-content">
-          <div className={isDashboard ? 'admin-heading admin-dashboard-heading' : 'admin-heading'}>
+          <div
+            className={
+              isDashboard
+                ? 'admin-heading admin-dashboard-heading'
+                : 'admin-heading'
+            }
+          >
             <div>
-              <span className="admin-eyebrow">PRIVATE WORKSPACE / {isDashboard ? 'DASHBOARD' : isContacts ? 'ENQUIRIES' : 'FEEDBACK'}</span>
-              <h1>{isDashboard ? <>Good morning.<br /><em>Here’s your overview.</em></> : isContacts ? <>Project<br /><em>enquiries.</em></> : <>Client<br /><em>feedback.</em></>}</h1>
-              <p>{isDashboard ? 'Keep track of project enquiries and hear directly from your clients.' : isContacts ? 'Review incoming project enquiries and get back to prospective clients.' : 'Read what clients have shared about their experience with your team.'}</p>
+              <span className="admin-eyebrow">
+                PRIVATE WORKSPACE /{' '}
+                {isDashboard
+                  ? 'DASHBOARD'
+                  : isContacts
+                    ? 'ENQUIRIES'
+                    : 'FEEDBACK'}
+              </span>
+
+              <h1>
+                {isDashboard ? (
+                  <>
+                    Good morning.
+                    <br />
+                    <em>Here’s your overview.</em>
+                  </>
+                ) : isContacts ? (
+                  <>
+                    Project
+                    <br />
+                    <em>enquiries.</em>
+                  </>
+                ) : (
+                  <>
+                    Client
+                    <br />
+                    <em>feedback.</em>
+                  </>
+                )}
+              </h1>
+
+              <p>
+                {isDashboard
+                  ? 'Keep track of project enquiries and hear directly from your clients.'
+                  : isContacts
+                    ? 'Review incoming project enquiries and get back to prospective clients.'
+                    : 'Read what clients have shared about their experience with your team.'}
+              </p>
             </div>
-            {isDashboard && <div className="admin-heading-art" aria-hidden="true"><span>O.</span><i /><i /><i /></div>}
+
+            {isDashboard && (
+              <div className="admin-heading-art" aria-hidden="true">
+                <span>O.</span>
+                <i />
+                <i />
+                <i />
+              </div>
+            )}
           </div>
+
           {isDashboard ? (
             <>
-              <section className="admin-overview" aria-label="Dashboard overview">
-                <button className="admin-stat-card" type="button" onClick={() => { setActiveSection('contacts'); setActiveView('contacts'); }}>
-                  <span className="admin-stat-icon admin-icon-enquiries" aria-hidden="true">↗</span>
-                  <span className="admin-stat-label">TOTAL ENQUIRIES</span>
-                  <strong>{summary ? summary.enquiries : '—'}</strong>
-                  <span className="admin-stat-link">View enquiries <span aria-hidden="true">↗</span></span>
+              <section
+                className="admin-overview"
+                aria-label="Dashboard overview"
+              >
+                <button
+                  className="admin-stat-card"
+                  type="button"
+                  onClick={() => openSection('contacts')}
+                >
+                  <span
+                    className="admin-stat-icon admin-icon-enquiries"
+                    aria-hidden="true"
+                  >
+                    ↗
+                  </span>
+
+                  <span className="admin-stat-label">
+                    TOTAL ENQUIRIES
+                  </span>
+
+                  <strong>
+                    {summary ? summary.enquiries : '—'}
+                  </strong>
+
+                  <span className="admin-stat-link">
+                    View enquiries <span aria-hidden="true">↗</span>
+                  </span>
                 </button>
-                <button className="admin-stat-card" type="button" onClick={() => { setActiveSection('feedback'); setActiveView('feedback'); }}>
-                  <span className="admin-stat-icon admin-icon-feedback" aria-hidden="true">“</span>
-                  <span className="admin-stat-label">CLIENT FEEDBACK</span>
-                  <strong>{summary ? summary.feedback : '—'}</strong>
-                  <span className="admin-stat-link">Read feedback <span aria-hidden="true">↗</span></span>
+
+                <button
+                  className="admin-stat-card"
+                  type="button"
+                  onClick={() => openSection('feedback')}
+                >
+                  <span
+                    className="admin-stat-icon admin-icon-feedback"
+                    aria-hidden="true"
+                  >
+                    “
+                  </span>
+
+                  <span className="admin-stat-label">
+                    CLIENT FEEDBACK
+                  </span>
+
+                  <strong>
+                    {summary ? summary.feedback : '—'}
+                  </strong>
+
+                  <span className="admin-stat-link">
+                    Read feedback <span aria-hidden="true">↗</span>
+                  </span>
                 </button>
+
                 <div className="admin-stat-card admin-stat-rating">
-                  <span className="admin-stat-icon admin-icon-rating" aria-hidden="true">★</span>
-                  <span className="admin-stat-label">AVERAGE RATING</span>
-                  <strong>{summary ? Number(summary.averageRating || 0).toFixed(1) : '—'}<small> / 5</small></strong>
-                  <span className="admin-stat-stars" aria-label="Average client rating">★★★★★</span>
+                  <span
+                    className="admin-stat-icon admin-icon-rating"
+                    aria-hidden="true"
+                  >
+                    ★
+                  </span>
+
+                  <span className="admin-stat-label">
+                    AVERAGE RATING
+                  </span>
+
+                  <strong>
+                    {summary
+                      ? Number(summary.averageRating || 0).toFixed(1)
+                      : '—'}
+                    <small> / 5</small>
+                  </strong>
+
+                  <span className="admin-stat-stars">
+                    {'★'.repeat(
+                      Math.round(Number(summary?.averageRating || 0))
+                    )}
+                    {'☆'.repeat(
+                      5 -
+                        Math.round(
+                          Number(summary?.averageRating || 0)
+                        )
+                    )}
+                  </span>
                 </div>
               </section>
-              {summaryError && <p className="admin-error admin-summary-error" role="alert">{summaryError}</p>}
+
+              {summaryError && (
+                <p className="admin-error admin-summary-error" role="alert">
+                  {summaryError}
+                </p>
+              )}
+
               <section className="admin-dashboard-note">
                 <div>
-                  <span className="admin-eyebrow">BUILT ON GOOD CONVERSATIONS</span>
+                  <span className="admin-eyebrow">
+                    BUILT ON GOOD CONVERSATIONS
+                  </span>
+
                   <h2>Every great project starts with a hello.</h2>
-                  <p>Review new project requests, follow up with potential clients, and keep every conversation moving.</p>
+
+                  <p>
+                    Review new project requests, follow up with potential
+                    clients, and keep every conversation moving.
+                  </p>
                 </div>
-                <button type="button" onClick={() => { setActiveSection('contacts'); setActiveView('contacts'); }}>Explore enquiries <span aria-hidden="true">↗</span></button>
+
+                <button
+                  type="button"
+                  onClick={() => openSection('contacts')}
+                >
+                  Explore enquiries <span aria-hidden="true">↗</span>
+                </button>
               </section>
             </>
           ) : (
             <section className="admin-records" aria-live="polite">
               <div className="admin-records-heading">
                 <div>
-                  <span className="admin-eyebrow">{isContacts ? 'PROJECT ENQUIRIES' : 'CLIENT STORIES'}</span>
+                  <span className="admin-eyebrow">
+                    {isContacts ? 'PROJECT ENQUIRIES' : 'CLIENT STORIES'}
+                  </span>
+
                   <h2>{isContacts ? 'Enquiries' : 'Feedback'}</h2>
                 </div>
+
                 <div className="admin-record-controls">
-                  <span className="admin-record-count">{records.length} {records.length === 1 ? 'record' : 'records'}</span>
-                  <button type="button" className="admin-refresh" onClick={loadRecords} disabled={loadingRecords}>
+                  <span className="admin-record-count">
+                    {records.length}{' '}
+                    {records.length === 1 ? 'record' : 'records'}
+                  </span>
+
+                  <button
+                    type="button"
+                    className="admin-refresh"
+                    onClick={loadRecords}
+                    disabled={loadingRecords}
+                  >
                     {loadingRecords ? 'Refreshing…' : 'Refresh'}
                   </button>
                 </div>
               </div>
-              {recordsError && <p className="admin-error" role="alert">{recordsError}</p>}
+
+              {recordsError && (
+                <p className="admin-error" role="alert">
+                  {recordsError}
+                </p>
+              )}
+
               {loadingRecords ? (
                 <p className="admin-empty">Loading records…</p>
               ) : recordsError ? null : records.length === 0 ? (
-                <p className="admin-empty">Nothing here yet. New {isContacts ? 'enquiries' : 'feedback'} will appear here.</p>
+                <p className="admin-empty">
+                  Nothing here yet. New{' '}
+                  {isContacts ? 'enquiries' : 'feedback'} will appear here.
+                </p>
               ) : (
                 <div className="admin-record-list">
-                  {records.map((record) => (
-                    <article className="admin-record" key={record.id}>
-                      <div className="admin-record-topline">
-                        <span className="admin-record-id">RECORD / {String(record.id).padStart(4, '0')}</span>
-                        {isContacts && <a href={`mailto:${record.email}`} className="admin-record-action">Reply by email ↗</a>}
-                      </div>
-                      <h3>{record.name}</h3>
-                      <div className="admin-record-meta">
-                        {isContacts && <a href={`mailto:${record.email}`}>{record.email}</a>}
-                        {record.phone && <a href={`tel:${record.phone}`}>{record.phone}</a>}
-                        <span>{record.project_type}</span>
-                        {!isContacts && <span className="admin-rating" aria-label={`${record.rating} out of 5 stars`}>{'★'.repeat(Number(record.rating))}{'☆'.repeat(5 - Number(record.rating))}</span>}
-                      </div>
-                      <p className="admin-record-message">{isContacts ? record.message : record.feedback}</p>
-                    </article>
-                  ))}
+                  {records.map((record) => {
+                    const recordName =
+                      typeof record.name === 'string' &&
+                      record.name.trim()
+                        ? record.name
+                        : 'Name not provided';
+
+                    const projectType =
+                      typeof record.project_type === 'string' &&
+                      record.project_type.trim()
+                        ? record.project_type
+                        : 'Project type not provided';
+
+                    const rating = Math.max(
+                      0,
+                      Math.min(5, Number(record.rating) || 0)
+                    );
+
+                    return (
+                      <article
+                        className="admin-record"
+                        key={record.id}
+                      >
+                        <div className="admin-record-topline">
+                          <span className="admin-record-id">
+                            RECORD / {String(record.id).padStart(4, '0')}
+                          </span>
+
+                          {isContacts && record.email && (
+                            <a
+                              href={`mailto:${record.email}`}
+                              className="admin-record-action"
+                            >
+                              Reply by email ↗
+                            </a>
+                          )}
+                        </div>
+
+                        <h3>{recordName}</h3>
+
+                        <div className="admin-record-meta">
+                          {isContacts && record.email && (
+                            <a href={`mailto:${record.email}`}>
+                              {record.email}
+                            </a>
+                          )}
+
+                          {isContacts && record.phone && (
+                            <a href={`tel:${record.phone}`}>
+                              {record.phone}
+                            </a>
+                          )}
+
+                          <span>
+                            {isContacts
+                              ? projectType
+                              : `Project: ${projectType}`}
+                          </span>
+
+                          {!isContacts && (
+                            <span
+                              className="admin-rating"
+                              aria-label={`${rating} out of 5 stars`}
+                            >
+                              {'★'.repeat(rating)}
+                              {'☆'.repeat(5 - rating)}
+                              <span> ({rating}/5)</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="admin-record-message">
+                          {isContacts
+                            ? record.message || 'No message provided.'
+                            : record.feedback || 'No feedback provided.'}
+                        </p>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </section>

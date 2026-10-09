@@ -5,42 +5,64 @@ import './Feedback.css';
 function Feedback() {
   const [rating, setRating] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
 
-    if (rating === 0) return;
+    if (rating === 0) {
+      alert('Please select a star rating.');
+      return;
+    }
 
-    const form = event.target;
+    const form = event.currentTarget;
 
     const data = {
-      name: form.name.value,
-      projectType: form.projectType.value,
+      name: form.elements.name.value.trim(),
+      projectType: form.elements.projectType.value,
       rating: rating,
-      feedback: form.feedback.value
+      feedback: form.elements.feedback.value.trim()
     };
 
+    if (!data.name || !data.projectType || !data.feedback) {
+      alert('Please fill in all fields.');
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      const response = await fetch("/api/feedback", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(data)
-      });
+      const response = await fetch(
+        'https://construction-production-ea89.up.railway.app/api/feedback',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        }
+      );
 
       const result = await response.json();
 
-      if (response.ok) {
-        console.log("Feedback saved:", result);
-        setSubmitted(true);
-      } else {
-        alert(result.message);
+      if (!response.ok) {
+        throw new Error(
+          result.message || 'Failed to save feedback.'
+        );
       }
 
+      setSubmitted(true);
+      form.reset();
+      setRating(0);
     } catch (error) {
-      console.log("Feedback error:", error);
-      alert("Cannot connect to backend.");
+      console.error('Feedback error:', error);
+
+      alert(
+        error.message ||
+          'Cannot connect to backend. Please try again.'
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -49,32 +71,75 @@ function Feedback() {
       <section className="feedback-hero">
         <div className="site-container feedback-hero-inner">
           <div>
-            <span className="eyebrow"><span /> WORDS FROM OUR CLIENTS</span>
-            <h1>Good work is<br />better <em>together.</em></h1>
-            <p>Every project is personal. We’re grateful when our clients share what the journey felt like for them.</p>
+            <span className="eyebrow">
+              <span /> WORDS FROM OUR CLIENTS
+            </span>
+
+            <h1>
+              Good work is
+              <br />
+              better <em>together.</em>
+            </h1>
+
+            <p>
+              Every project is personal. We’re grateful when our clients
+              share what the journey felt like for them.
+            </p>
           </div>
-          <div className="feedback-hero-image"><img src="https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1100&q=85" alt="Bright contemporary living room with natural finishes" /></div>
+
+          <div className="feedback-hero-image">
+            <img
+              src="https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1100&q=85"
+              alt="Bright contemporary living room with natural finishes"
+            />
+          </div>
         </div>
       </section>
 
       <section className="feedback-form-section">
         <div className="site-container feedback-form-layout">
-
           <div className="feedback-form-intro">
-            <span className="eyebrow"><span /> YOUR EXPERIENCE MATTERS</span>
-            <h2>Tell us how<br />we <em>did.</em></h2>
-            <p>We’re always learning. If we’ve had the pleasure of working together, we’d love to hear what stood out to you.</p>
-            <div className="feedback-thanks">Thank you for being part of the Oak &amp; Stone story.</div>
+            <span className="eyebrow">
+              <span /> YOUR EXPERIENCE MATTERS
+            </span>
+
+            <h2>
+              Tell us how
+              <br />
+              we <em>did.</em>
+            </h2>
+
+            <p>
+              We’re always learning. If we’ve had the pleasure of working
+              together, we’d love to hear what stood out to you.
+            </p>
+
+            <div className="feedback-thanks">
+              Thank you for being part of the Oak &amp; Stone story.
+            </div>
           </div>
 
           <div className="feedback-form-card">
-
             {submitted ? (
               <div className="feedback-success" role="status">
-                <span className="success-icon" aria-hidden="true">✓</span>
-                <span className="eyebrow"><span /> THANK YOU</span>
-                <h2>Your words<br /><em>mean a lot.</em></h2>
-                <p>Thanks for taking the time to share your experience with Oak &amp; Stone.</p>
+                <span className="success-icon" aria-hidden="true">
+                  ✓
+                </span>
+
+                <span className="eyebrow">
+                  <span /> THANK YOU
+                </span>
+
+                <h2>
+                  Your words
+                  <br />
+                  <em>mean a lot.</em>
+                </h2>
+
+                <p>
+                  Thanks for taking the time to share your experience
+                  with Oak &amp; Stone.
+                </p>
 
                 <button
                   type="button"
@@ -88,9 +153,10 @@ function Feedback() {
                 </button>
               </div>
             ) : (
-
-              <form className="feedback-form" onSubmit={handleSubmit}>
-
+              <form
+                className="feedback-form"
+                onSubmit={handleSubmit}
+              >
                 <label className="rating-label">
                   How was your experience?
                 </label>
@@ -172,13 +238,13 @@ function Feedback() {
                 <button
                   type="submit"
                   className="button-primary"
+                  disabled={loading}
                 >
-                  Share your feedback <span>↗</span>
+                  {loading ? 'Submitting...' : 'Share your feedback'}
+                  {!loading && <span>↗</span>}
                 </button>
-
               </form>
             )}
-
           </div>
         </div>
       </section>
