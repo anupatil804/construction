@@ -109,6 +109,7 @@ function verifySession(req) {
     if (parts.length !== 2) return false;
 
     const [encodedPayload, receivedSignature] = parts;
+
     const payload = Buffer.from(
       encodedPayload,
       "base64url"
@@ -172,7 +173,7 @@ function requireAdmin(req, res, next) {
 }
 
 // --------------------------------------------------
-// BASIC HEALTH CHECK
+// HEALTH CHECK AND ROOT ROUTE
 // --------------------------------------------------
 
 app.get("/api/test", (req, res) => {
@@ -188,10 +189,6 @@ app.get("/api/health", (req, res) => {
     message: "Server is healthy.",
   });
 });
-
-// --------------------------------------------------
-// ROOT ROUTE
-// --------------------------------------------------
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -330,10 +327,11 @@ app.get("/api/admin/feedback", requireAdmin, (req, res) => {
 
 // --------------------------------------------------
 // CONTACT FORM
+// FIXED: service COLUMN REMOVED FROM SQL INSERT
 // --------------------------------------------------
 
 app.post("/api/contact", (req, res) => {
-  const { name, email, phone, service, message } = req.body;
+  const { name, email, phone, message } = req.body;
 
   if (!name || !email || !message) {
     return res.status(400).json({
@@ -343,8 +341,8 @@ app.post("/api/contact", (req, res) => {
   }
 
   const sql = `
-    INSERT INTO contact (name, email, phone, service, message)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO contact (name, email, phone, message)
+    VALUES (?, ?, ?, ?)
   `;
 
   db.query(
@@ -353,7 +351,6 @@ app.post("/api/contact", (req, res) => {
       String(name).trim(),
       String(email).trim(),
       phone || "",
-      service || "",
       String(message).trim(),
     ],
     (error, result) => {
