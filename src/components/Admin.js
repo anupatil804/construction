@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useState } from 'react';
 import './Admin.css';
 
@@ -13,56 +14,108 @@ async function readJsonResponse(response) {
 
   if (!contentType.includes('application/json')) {
     throw new Error(
-      'The backend did not return JSON. Please check the Railway API URL and backend routes.'
+      'The backend did not return JSON. Check your Railway API URL and backend routes.'
     );
   }
 
   return response.json();
 }
 
-function Admin() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+export default function Admin() {
+  const [admin, setAdmin] = useState(null);
+  const [loginForm, setLoginForm] = useState({
+    username: '',
+    password: '',
+  });
+
   const [loginError, setLoginError] = useState('');
-  const [activeView, setActiveView] = useState('dashboard');
+  const [loadingLogin, setLoadingLogin] = useState(false);
+
   const [activeSection, setActiveSection] = useState('contacts');
   const [records, setRecords] = useState([]);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [recordsError, setRecordsError] = useState('');
-  const [summary, setSummary] = useState(null);
-  const [summaryError, setSummaryError] = useState('');
 
+  const [summary, setSummary] = useState({
+    enquiries: 0,
+    feedback: 0,
+    averageRating: 0,
+  });
+  const [summaryError, setSummaryError] = useState('');
+  const [loadingSummary, setLoadingSummary] = useState(false);
+
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  // Check whether an admin session already exists.
   useEffect(() => {
     let cancelled = false;
 
-    fetch(`${API_URL}/api/admin/session`, {
-      credentials: 'include',
-    })
-      .then((response) => {
-        if (response.ok) {
-          if (!cancelled) setAuthenticated(true);
-        } else if (response.status !== 401) {
-          throw new Error('Could not check the admin session.');
+    async function checkSession() {
+      try {
+        const response = await fetch(`${API_URL}/api/admin/session`, {
+          method: 'GET',
+          credentials: 'include',
+        });
+
+        const result = await readJsonResponse(response);
+
+        if (!cancelled && response.ok && result.success && result.admin) {
+          setAdmin(result.admin);
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!cancelled) {
-          setLoginError(
-            error.message || 'Could not connect to the admin service. Please try again.'
-          );
+          console.error('Session check failed:', error);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setCheckingSession(false);
-      });
+      }
+    }
+
+    checkSession();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
+  // Load dashboard summary.
+  const loadSummary = useCallback(async () => {
+    setLoadingSummary(true);
+    setSummaryError('');
+
+    try {
+      const response = await fetch(`${API_URL}/api/admin/summary`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      const result = await readJsonResponse(response);
+
+      if (response.status === 401) {
+        setAdmin(null);
+        throw new Error('Your session has expired. Please log in again.');
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.message || 'Failed to load dashboard summary.'
+        );
+      }
+
+      const summaryData = result.summary || result;
+
+      setSummary({
+        enquiries: Number(summaryData.totalContacts ?? summaryData.enquiries ?? 0),
+        feedback: Number(summaryData.totalFeedback ?? summaryData.feedback ?? 0),
+        averageRating: Number(summaryData.averageRating ?? 0),
+      });
+    } catch (error) {
+      console.error('Dashboard summary error:', error);
+      setSummaryError(error.message || 'Failed to load dashboard summary.');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }, []);
+
+  // Load enquiries or feedback records.
   const loadRecords = useCallback(async () => {
     setLoadingRecords(true);
     setRecordsError('');
@@ -70,179 +123,177 @@ function Admin() {
     try {
       const response = await fetch(
         `${API_URL}/api/admin/${activeSection}`,
-        { credentials: 'include' }
+        {
+          method: 'GET',
+          credentials: 'include',
+        }
       );
 
       const result = await readJsonResponse(response);
 
       if (response.status === 401) {
-        setAuthenticated(false);
-        setRecords([]);
-        return;
+        setAdmin(null);
+        throw new Error('Your session has expired. Please log in again.');
       }
 
-      if (!response.ok) {
-        throw new Error(result.message || 'Could not load records.');
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Failed to load records.');
       }
 
-      setRecords(Array.isArray(result.records) ? result.records : []);
+      // The backend returns "contacts" for enquiries and "feedback" for feedback.
+      const data =
+        activeSection === 'contacts'
+          ? result.contacts
+          : result.feedback;
+
+      setRecords(Array.isArray(data) ? data : []);
     } catch (error) {
-      setRecordsError(
-        error.message || 'Could not connect to the admin service.'
-      );
+      console.error('Records loading error:', error);
+      setRecords([]);
+      setRecordsError(error.message || 'Failed to load records.');
     } finally {
       setLoadingRecords(false);
     }
   }, [activeSection]);
 
+  // Load data after successful login.
   useEffect(() => {
-    if (authenticated && activeView !== 'dashboard') {
-      loadRecords();
-    }
-  }, [authenticated, activeView, loadRecords]);
+    if (!admin) return;
+
+    loadSummary();
+  }, [admin, loadSummary]);
 
   useEffect(() => {
-    if (!authenticated) return undefined;
+    if (!admin) return;
 
-    let cancelled = false;
+    loadRecords();
+  }, [admin, loadRecords]);
 
-    fetch(`${API_URL}/api/admin/summary`, {
-      credentials: 'include',
-    })
-      .then(async (response) => {
-        const result = await readJsonResponse(response);
-
-        if (response.status === 401) {
-          if (!cancelled) setAuthenticated(false);
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            result.message || 'Could not load dashboard summary.'
-          );
-        }
-
-        if (!cancelled) setSummary(result.summary);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setSummaryError(
-            error.message || 'Could not load dashboard summary.'
-          );
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authenticated]);
-
+  // Admin login.
   async function handleLogin(event) {
     event.preventDefault();
     setLoginError('');
+    setLoadingLogin(true);
 
     try {
       const response = await fetch(`${API_URL}/api/admin/login`, {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username, password }),
+        credentials: 'include',
+        body: JSON.stringify(loginForm),
       });
 
       const result = await readJsonResponse(response);
 
-      if (!response.ok) {
-        setLoginError(
-          result.message || 'Sign-in failed. Please try again.'
-        );
-        return;
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Login failed.');
       }
 
-      setPassword('');
-      setAuthenticated(true);
-    } catch (error) {
-      setLoginError(
-        error.message || 'Could not connect to the admin service. Please try again.'
+      setAdmin(
+        result.admin || {
+          username: loginForm.username,
+        }
       );
+
+      setLoginForm({
+        username: '',
+        password: '',
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      setLoginError(error.message || 'Unable to log in. Please try again.');
+    } finally {
+      setLoadingLogin(false);
     }
   }
 
+  // Admin logout.
   async function handleLogout() {
+    setLoggingOut(true);
+
     try {
       const response = await fetch(`${API_URL}/api/admin/logout`, {
         method: 'POST',
         credentials: 'include',
       });
 
-      if (!response.ok) {
-        throw new Error('Could not sign out.');
+      const result = await readJsonResponse(response);
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Logout failed.');
       }
 
-      setAuthenticated(false);
+      setAdmin(null);
       setRecords([]);
-      setPassword('');
-      setLoginError('');
-      setSummary(null);
-      setSummaryError('');
+      setSummary({
+        enquiries: 0,
+        feedback: 0,
+        averageRating: 0,
+      });
     } catch (error) {
-      setRecordsError(error.message || 'Could not sign out.');
+      console.error('Logout error:', error);
+      setRecordsError(error.message || 'Unable to log out.');
+    } finally {
+      setLoggingOut(false);
     }
   }
 
-  function openSection(section) {
-    setActiveSection(section);
-    setActiveView(section);
-    setRecordsError('');
+  function formatDate(value) {
+    if (!value) return '—';
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+
+    return date.toLocaleString();
   }
 
-  if (checkingSession) {
+  // Login screen.
+  if (!admin) {
     return (
       <main className="admin-page">
-        <p className="admin-loading">Checking admin session…</p>
-      </main>
-    );
-  }
+        <section className="admin-login">
+          <h1>Admin Login</h1>
+          <p>Log in to manage project enquiries and client feedback.</p>
 
-  if (!authenticated) {
-    return (
-      <main className="admin-page admin-login-page">
-        <section className="admin-login-card">
-          <a href="/" className="admin-brand">
-            oak &amp; stone<span> / admin</span>
-          </a>
-
-          <span className="admin-eyebrow">PRIVATE WORKSPACE</span>
-
-          <h1>
-            Welcome <em>back.</em>
-          </h1>
-
-          <p>Sign in to view project enquiries and client feedback.</p>
-
-          <form className="admin-login-form" onSubmit={handleLogin}>
-            <label>
-              Username
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <label htmlFor="admin-username">Username</label>
               <input
+                id="admin-username"
+                type="text"
                 autoComplete="username"
+                value={loginForm.username}
+                onChange={(event) =>
+                  setLoginForm({
+                    ...loginForm,
+                    username: event.target.value,
+                  })
+                }
                 required
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
               />
-            </label>
+            </div>
 
-            <label>
-              Password
+            <div className="form-group">
+              <label htmlFor="admin-password">Password</label>
               <input
+                id="admin-password"
                 type="password"
                 autoComplete="current-password"
+                value={loginForm.password}
+                onChange={(event) =>
+                  setLoginForm({
+                    ...loginForm,
+                    password: event.target.value,
+                  })
+                }
                 required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
               />
-            </label>
+            </div>
 
             {loginError && (
               <p className="admin-error" role="alert">
@@ -250,423 +301,242 @@ function Admin() {
               </p>
             )}
 
-            <button className="admin-button" type="submit">
-              Sign in <span aria-hidden="true">↗</span>
+            <button type="submit" disabled={loadingLogin}>
+              {loadingLogin ? 'Logging in...' : 'Login'}
             </button>
           </form>
-
-          <a className="admin-back-link" href="/">
-            ← Back to website
-          </a>
         </section>
       </main>
     );
   }
 
-  const isContacts = activeSection === 'contacts';
-  const isDashboard = activeView === 'dashboard';
-
+  // Admin dashboard.
   return (
     <main className="admin-page">
-      <aside className="admin-sidebar">
-        <a href="/" className="admin-brand">
-          <span className="admin-brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-
-          <span className="admin-brand-type">
-            oak &amp; stone
-            <span>build / admin</span>
-          </span>
-        </a>
-
-        <span className="admin-sidebar-label">WORKSPACE</span>
-
-        <nav className="admin-sidebar-nav" aria-label="Admin navigation">
-          <button
-            type="button"
-            className={
-              isDashboard
-                ? 'admin-side-link active'
-                : 'admin-side-link'
-            }
-            aria-current={isDashboard ? 'page' : undefined}
-            onClick={() => setActiveView('dashboard')}
-          >
-            <span aria-hidden="true">▦</span> Dashboard
-          </button>
-
-          {sections.map((section) => {
-            const active = activeView === section.id;
-            const count =
-              section.id === 'contacts'
-                ? summary?.enquiries
-                : summary?.feedback;
-
-            return (
-              <button
-                key={section.id}
-                type="button"
-                className={
-                  active
-                    ? 'admin-side-link active'
-                    : 'admin-side-link'
-                }
-                aria-current={active ? 'page' : undefined}
-                onClick={() => openSection(section.id)}
-              >
-                <span aria-hidden="true">
-                  {section.id === 'contacts' ? '↗' : '☆'}
-                </span>
-
-                {section.label}
-
-                {count !== undefined && (
-                  <span className="admin-side-count">{count}</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="admin-sidebar-bottom">
-          <a href="/" className="admin-sidebar-back">
-            ← Back to website
-          </a>
-
-          <button
-            type="button"
-            className="admin-logout"
-            onClick={handleLogout}
-          >
-            Sign out <span aria-hidden="true">↗</span>
-          </button>
+      <div className="admin-header">
+        <div>
+          <h1>Admin Dashboard</h1>
+          <p>
+            Welcome, {admin.username || 'Admin'}. Manage your website enquiries
+            and feedback.
+          </p>
         </div>
-      </aside>
 
-      <div className="admin-main">
-        <header className="admin-topbar">
-          <span>
-            {isDashboard
-              ? 'Dashboard'
-              : isContacts
-                ? 'Project enquiries'
-                : 'Client feedback'}
-          </span>
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+        >
+          {loggingOut ? 'Logging out...' : 'Logout'}
+        </button>
+      </div>
 
-          <span className="admin-topbar-status">
-            <span /> Admin workspace
-          </span>
-        </header>
+      <section className="admin-summary">
+        <article className="summary-card">
+          <h2>Project Enquiries</h2>
+          <p className="summary-number">
+            {loadingSummary ? '...' : summary.enquiries}
+          </p>
+          <span>Total enquiries received</span>
+        </article>
 
-        <section className="admin-content">
+        <article className="summary-card">
+          <h2>Client Feedback</h2>
+          <p className="summary-number">
+            {loadingSummary ? '...' : summary.feedback}
+          </p>
+          <span>Total feedback received</span>
+        </article>
+
+        <article className="summary-card">
+          <h2>Average Rating</h2>
+          <p className="summary-number">
+            {loadingSummary ? '...' : summary.averageRating.toFixed(1)}
+            <span> / 5</span>
+          </p>
           <div
-            className={
-              isDashboard
-                ? 'admin-heading admin-dashboard-heading'
-                : 'admin-heading'
-            }
+            className="admin-stars"
+            aria-label={`Average rating ${summary.averageRating.toFixed(1)} out of 5`}
           >
-            <div>
-              <span className="admin-eyebrow">
-                PRIVATE WORKSPACE /{' '}
-                {isDashboard
-                  ? 'DASHBOARD'
-                  : isContacts
-                    ? 'ENQUIRIES'
-                    : 'FEEDBACK'}
-              </span>
-
-              <h1>
-                {isDashboard ? (
-                  <>
-                    Good morning.
-                    <br />
-                    <em>Here’s your overview.</em>
-                  </>
-                ) : isContacts ? (
-                  <>
-                    Project
-                    <br />
-                    <em>enquiries.</em>
-                  </>
-                ) : (
-                  <>
-                    Client
-                    <br />
-                    <em>feedback.</em>
-                  </>
-                )}
-              </h1>
-
-              <p>
-                {isDashboard
-                  ? 'Keep track of project enquiries and hear directly from your clients.'
-                  : isContacts
-                    ? 'Review incoming project enquiries and get back to prospective clients.'
-                    : 'Read what clients have shared about their experience with your team.'}
-              </p>
-            </div>
-
-            {isDashboard && (
-              <div className="admin-heading-art" aria-hidden="true">
-                <span>O.</span>
-                <i />
-                <i />
-                <i />
-              </div>
+            {'★'.repeat(
+              Math.max(
+                0,
+                Math.min(5, Math.round(summary.averageRating))
+              )
+            )}
+            {'☆'.repeat(
+              5 -
+                Math.max(
+                  0,
+                  Math.min(5, Math.round(summary.averageRating))
+                )
             )}
           </div>
+        </article>
+      </section>
 
-          {isDashboard ? (
-            <>
-              <section
-                className="admin-overview"
-                aria-label="Dashboard overview"
+      {summaryError && (
+        <div className="admin-error" role="alert">
+          {summaryError}
+          <button type="button" onClick={loadSummary}>
+            Try again
+          </button>
+        </div>
+      )}
+
+      <section className="admin-records">
+        <div className="admin-records-header">
+          <div>
+            <h2>
+              {activeSection === 'contacts'
+                ? 'Project Enquiries'
+                : 'Client Feedback'}
+            </h2>
+            <p>
+              {records.length}{' '}
+              {records.length === 1 ? 'record' : 'records'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              loadRecords();
+              loadSummary();
+            }}
+            disabled={loadingRecords || loadingSummary}
+          >
+            {loadingRecords || loadingSummary ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+
+        <nav className="admin-tabs" aria-label="Dashboard sections">
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={
+                activeSection === section.id ? 'active' : ''
+              }
+              onClick={() => setActiveSection(section.id)}
+            >
+              {section.label}
+            </button>
+          ))}
+        </nav>
+
+        {recordsError && (
+          <div className="admin-error" role="alert">
+            {recordsError}
+            <button type="button" onClick={loadRecords}>
+              Try again
+            </button>
+          </div>
+        )}
+
+        {loadingRecords ? (
+          <p className="admin-loading">Loading records...</p>
+        ) : recordsError ? null : records.length === 0 ? (
+          <div className="admin-empty">
+            <h3>Nothing here yet</h3>
+            <p>
+              {activeSection === 'contacts'
+                ? 'New enquiries will appear here.'
+                : 'New client feedback will appear here.'}
+            </p>
+          </div>
+        ) : activeSection === 'contacts' ? (
+          <div className="admin-table-wrapper">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Project Type</th>
+                  <th>Message</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {records.map((record, index) => (
+                  <tr key={record.id ?? index}>
+                    <td>{record.name || '—'}</td>
+                    <td>{record.email || '—'}</td>
+                    <td>{record.phone || '—'}</td>
+                    <td>
+                      {record.project_type ||
+                        record.projectType ||
+                        '—'}
+                    </td>
+                    <td>
+                      {record.message ||
+                        record.description ||
+                        '—'}
+                    </td>
+                    <td>
+                      {formatDate(
+                        record.created_at ||
+                          record.createdAt ||
+                          record.date
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="admin-feedback-list">
+            {records.map((record, index) => (
+              <article
+                className="admin-feedback-card"
+                key={record.id ?? index}
               >
-                <button
-                  className="admin-stat-card"
-                  type="button"
-                  onClick={() => openSection('contacts')}
-                >
-                  <span
-                    className="admin-stat-icon admin-icon-enquiries"
-                    aria-hidden="true"
-                  >
-                    ↗
-                  </span>
-
-                  <span className="admin-stat-label">
-                    TOTAL ENQUIRIES
-                  </span>
-
-                  <strong>
-                    {summary ? summary.enquiries : '—'}
-                  </strong>
-
-                  <span className="admin-stat-link">
-                    View enquiries <span aria-hidden="true">↗</span>
-                  </span>
-                </button>
-
-                <button
-                  className="admin-stat-card"
-                  type="button"
-                  onClick={() => openSection('feedback')}
-                >
-                  <span
-                    className="admin-stat-icon admin-icon-feedback"
-                    aria-hidden="true"
-                  >
-                    “
-                  </span>
-
-                  <span className="admin-stat-label">
-                    CLIENT FEEDBACK
-                  </span>
-
-                  <strong>
-                    {summary ? summary.feedback : '—'}
-                  </strong>
-
-                  <span className="admin-stat-link">
-                    Read feedback <span aria-hidden="true">↗</span>
-                  </span>
-                </button>
-
-                <div className="admin-stat-card admin-stat-rating">
-                  <span
-                    className="admin-stat-icon admin-icon-rating"
-                    aria-hidden="true"
-                  >
-                    ★
-                  </span>
-
-                  <span className="admin-stat-label">
-                    AVERAGE RATING
-                  </span>
-
-                  <strong>
-                    {summary
-                      ? Number(summary.averageRating || 0).toFixed(1)
-                      : '—'}
-                    <small> / 5</small>
-                  </strong>
-
-                  <span className="admin-stat-stars">
+                <div className="admin-feedback-header">
+                  <h3>{record.name || 'Anonymous'}</h3>
+                  <span className="admin-rating">
                     {'★'.repeat(
-                      Math.round(Number(summary?.averageRating || 0))
+                      Math.max(
+                        0,
+                        Math.min(5, Number(record.rating) || 0)
+                      )
                     )}
                     {'☆'.repeat(
                       5 -
-                        Math.round(
-                          Number(summary?.averageRating || 0)
+                        Math.max(
+                          0,
+                          Math.min(5, Number(record.rating) || 0)
                         )
                     )}
                   </span>
                 </div>
-              </section>
 
-              {summaryError && (
-                <p className="admin-error admin-summary-error" role="alert">
-                  {summaryError}
+                <p>
+                  {record.feedback ||
+                    record.message ||
+                    'No feedback text provided.'}
                 </p>
-              )}
 
-              <section className="admin-dashboard-note">
-                <div>
-                  <span className="admin-eyebrow">
-                    BUILT ON GOOD CONVERSATIONS
-                  </span>
-
-                  <h2>Every great project starts with a hello.</h2>
-
+                {record.project_type && (
                   <p>
-                    Review new project requests, follow up with potential
-                    clients, and keep every conversation moving.
+                    <strong>Project:</strong> {record.project_type}
                   </p>
-                </div>
+                )}
 
-                <button
-                  type="button"
-                  onClick={() => openSection('contacts')}
-                >
-                  Explore enquiries <span aria-hidden="true">↗</span>
-                </button>
-              </section>
-            </>
-          ) : (
-            <section className="admin-records" aria-live="polite">
-              <div className="admin-records-heading">
-                <div>
-                  <span className="admin-eyebrow">
-                    {isContacts ? 'PROJECT ENQUIRIES' : 'CLIENT STORIES'}
-                  </span>
-
-                  <h2>{isContacts ? 'Enquiries' : 'Feedback'}</h2>
-                </div>
-
-                <div className="admin-record-controls">
-                  <span className="admin-record-count">
-                    {records.length}{' '}
-                    {records.length === 1 ? 'record' : 'records'}
-                  </span>
-
-                  <button
-                    type="button"
-                    className="admin-refresh"
-                    onClick={loadRecords}
-                    disabled={loadingRecords}
-                  >
-                    {loadingRecords ? 'Refreshing…' : 'Refresh'}
-                  </button>
-                </div>
-              </div>
-
-              {recordsError && (
-                <p className="admin-error" role="alert">
-                  {recordsError}
-                </p>
-              )}
-
-              {loadingRecords ? (
-                <p className="admin-empty">Loading records…</p>
-              ) : recordsError ? null : records.length === 0 ? (
-                <p className="admin-empty">
-                  Nothing here yet. New{' '}
-                  {isContacts ? 'enquiries' : 'feedback'} will appear here.
-                </p>
-              ) : (
-                <div className="admin-record-list">
-                  {records.map((record) => {
-                    const recordName =
-                      typeof record.name === 'string' &&
-                      record.name.trim()
-                        ? record.name
-                        : 'Name not provided';
-
-                    const projectType =
-                      typeof record.project_type === 'string' &&
-                      record.project_type.trim()
-                        ? record.project_type
-                        : 'Project type not provided';
-
-                    const rating = Math.max(
-                      0,
-                      Math.min(5, Number(record.rating) || 0)
-                    );
-
-                    return (
-                      <article
-                        className="admin-record"
-                        key={record.id}
-                      >
-                        <div className="admin-record-topline">
-                          <span className="admin-record-id">
-                            RECORD / {String(record.id).padStart(4, '0')}
-                          </span>
-
-                          {isContacts && record.email && (
-                            <a
-                              href={`mailto:${record.email}`}
-                              className="admin-record-action"
-                            >
-                              Reply by email ↗
-                            </a>
-                          )}
-                        </div>
-
-                        <h3>{recordName}</h3>
-
-                        <div className="admin-record-meta">
-                          {isContacts && record.email && (
-                            <a href={`mailto:${record.email}`}>
-                              {record.email}
-                            </a>
-                          )}
-
-                          {isContacts && record.phone && (
-                            <a href={`tel:${record.phone}`}>
-                              {record.phone}
-                            </a>
-                          )}
-
-                          <span>
-                            {isContacts
-                              ? projectType
-                              : `Project: ${projectType}`}
-                          </span>
-
-                          {!isContacts && (
-                            <span
-                              className="admin-rating"
-                              aria-label={`${rating} out of 5 stars`}
-                            >
-                              {'★'.repeat(rating)}
-                              {'☆'.repeat(5 - rating)}
-                              <span> ({rating}/5)</span>
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="admin-record-message">
-                          {isContacts
-                            ? record.message || 'No message provided.'
-                            : record.feedback || 'No feedback provided.'}
-                        </p>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
-        </section>
-      </div>
+                <small>
+                  {formatDate(
+                    record.created_at ||
+                      record.createdAt ||
+                      record.date
+                  )}
+                </small>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
-
-export default Admin;
