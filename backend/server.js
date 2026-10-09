@@ -1,537 +1,450 @@
-
 const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
 const cors = require("cors");
+const dotenv = require("dotenv");
 
-// Load environment variables from backend/.env
-require("dotenv").config({
-  path: path.join(__dirname, ".env")
-});
+// Load backend environment variables
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 const db = require("./config/db");
 
 const app = express();
-
 const PORT = process.env.PORT || 5000;
-const ADMIN_COOKIE = "admin_session";
-const ADMIN_SESSION_SECONDS = 8 * 60 * 60;
 
-// ===============================
-// MIDDLEWARE
-// ===============================
+// Frontend URLs allowed to call this backend
+const allowedOrigins = [
+  "https://construction-mocha.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:3001",
+  process.env.CLIENT_URL,
+].filter(Boolean);
 
-app.use(cors());
+// CORS: allow Vercel and local React frontend, including admin cookies
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests without an Origin header, such as direct API tests
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ===============================
-// ADMIN HELPERS
-// ===============================
+// --------------------------------------------------
+// ADMIN AUTHENTICATION
+// --------------------------------------------------
 
-function safeCompare(left, right) {
-  const leftHash = crypto
-    .createHash("sha256")
-    .update(String(left))
-    .digest();
+const COOKIE_NAME = "admin_session";
+const SESSION_DURATION = 8 * 60 * 60 * 1000; // 8 hours
 
-  const rightHash = crypto
-    .createHash("sha256")
-    .update(String(right))
-    .digest();
+function getSessionSecret() {
+  const secret = process.env.ADMIN_SESSION_SECRET;
 
-  return crypto.timingSafeEqual(leftHash, rightHash);
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "ADMIN_SESSION_SECRET must be set to a secret of at least 32 characters."
+    );
+  }
+
+  return secret;
 }
 
-function sessionSignature(payload) {
+function signSession(payload) {
   return crypto
-    .createHmac(
-      "sha256",
-      process.env.ADMIN_SESSION_SECRET
-    )
+    .createHmac("sha256", getSessionSecret())
     .update(payload)
     .digest("hex");
 }
 
-function hasAdminConfiguration() {
-  return Boolean(
-    process.env.ADMIN_USERNAME &&
-    process.env.ADMIN_PASSWORD &&
-    process.env.ADMIN_SESSION_SECRET &&
-    process.env.ADMIN_SESSION_SECRET.length >= 32
+function safeEqual(a, b) {
+  const bufferA = Buffer.from(String(a));
+  const bufferB = Buffer.from(String(b));
+
+  return (
+    bufferA.length === bufferB.length &&
+    crypto.timingSafeEqual(bufferA, bufferB)
   );
 }
 
-function isAdminAuthenticated(req) {
-  if (!hasAdminConfiguration()) {
-    return false;
-  }
+function getCookie(req, name) {
+  const cookieHeader = req.headers.cookie;
 
-  const cookieHeader = req.headers.cookie || "";
+  if (!cookieHeader) return null;
 
   const cookie = cookieHeader
     .split(";")
-    .map((part) => part.trim())
-    .find((part) =>
-      part.startsWith(`${ADMIN_COOKIE}=`)
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(`${name}=`));
+
+  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : null;
+}
+
+function createSession(username) {
+  const expiresAt = Date.now() + SESSION_DURATION;
+  const payload = `${username}|${expiresAt}`;
+  const signature = signSession(payload);
+
+  return {
+    value: `${Buffer.from(payload).toString("base64url")}.${signature}`,
+    expiresAt,
+  };
+}
+
+function verifySession(req) {
+  try {
+    const token = getCookie(req, COOKIE_NAME);
+
+    if (!token) return false;
+
+    const parts = token.split(".");
+    if (parts.length !== 2) return false;
+
+    const [encodedPayload, receivedSignature] = parts;
+    const payload = Buffer.from(encodedPayload, "base64url").toString("utf8");
+    const expectedSignature = signSession(payload);
+
+    if (!safeEqual(receivedSignature, expectedSignature)) {
+      return false;
+    }
+
+    const separatorIndex = payload.lastIndexOf("|");
+    if (separatorIndex === -1) return false;
+
+    const username = payload.slice(0, separatorIndex);
+    const expiresAt = Number(payload.slice(separatorIndex + 1));
+
+    return (
+      username === process.env.ADMIN_USERNAME &&
+      Number.isFinite(expiresAt) &&
+      Date.now() < expiresAt
     );
-
-  if (!cookie) {
+  } catch (error) {
+    console.error("Session verification failed:", error.message);
     return false;
   }
-
-  const token = cookie.slice(ADMIN_COOKIE.length + 1);
-  const separator = token.lastIndexOf(".");
-
-  if (separator < 0) {
-    return false;
-  }
-
-  const payload = token.slice(0, separator);
-  const signature = token.slice(separator + 1);
-
-  if (
-    !/^\d+$/.test(payload) ||
-    !/^[a-f0-9]{64}$/.test(signature)
-  ) {
-    return false;
-  }
-
-  if (
-    Number(payload) <=
-    Math.floor(Date.now() / 1000)
-  ) {
-    return false;
-  }
-
-  return safeCompare(
-    signature,
-    sessionSignature(payload)
-  );
 }
 
 function requireAdmin(req, res, next) {
-  if (!hasAdminConfiguration()) {
-    return res.status(503).json({
-      message: "Admin access is not configured."
-    });
-  }
-
-  if (!isAdminAuthenticated(req)) {
+  if (!verifySession(req)) {
     return res.status(401).json({
-      message: "Please sign in to access admin records."
+      success: false,
+      message: "Please log in as admin.",
     });
   }
 
   next();
 }
 
-function setAdminCookie(res, value, maxAge) {
-  const secure =
-    process.env.NODE_ENV === "production"
-      ? "; Secure"
-      : "";
+function setAdminCookie(res, token) {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  res.cookie; // Cookie is set below without requiring cookie-parser.
 
   res.setHeader(
     "Set-Cookie",
-    `${ADMIN_COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/api/admin; Max-Age=${maxAge}${secure}`
+    `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${
+      SESSION_DURATION / 1000
+    }; SameSite=${isProduction ? "None; Secure" : "Lax"}`
   );
 }
 
-// ===============================
-// ADMIN LOGIN
-// ===============================
+function clearAdminCookie(res) {
+  const isProduction = process.env.NODE_ENV === "production";
 
+  res.setHeader(
+    "Set-Cookie",
+    `${COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=${
+      isProduction ? "None; Secure" : "Lax"
+    }`
+  );
+}
+
+// Admin login
 app.post("/api/admin/login", (req, res) => {
-  if (!hasAdminConfiguration()) {
-    return res.status(503).json({
-      message: "Admin access is not configured."
+  const { username, password } = req.body;
+
+  if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+    return res.status(500).json({
+      success: false,
+      message: "Admin credentials are not configured on the server.",
     });
   }
 
-  const { username, password } = req.body || {};
-
   if (
-    typeof username !== "string" ||
-    typeof password !== "string" ||
-    !safeCompare(username, process.env.ADMIN_USERNAME) ||
-    !safeCompare(password, process.env.ADMIN_PASSWORD)
+    !safeEqual(username || "", process.env.ADMIN_USERNAME) ||
+    !safeEqual(password || "", process.env.ADMIN_PASSWORD)
   ) {
     return res.status(401).json({
-      message: "Incorrect username or password."
+      success: false,
+      message: "Invalid username or password.",
     });
   }
 
-  const payload = String(
-    Math.floor(Date.now() / 1000) +
-      ADMIN_SESSION_SECONDS
-  );
+  try {
+    const session = createSession(process.env.ADMIN_USERNAME);
+    setAdminCookie(res, session.value);
 
-  const token = `${payload}.${sessionSignature(payload)}`;
+    return res.json({
+      success: true,
+      message: "Admin login successful.",
+    });
+  } catch (error) {
+    console.error("Admin login error:", error.message);
 
-  setAdminCookie(res, token, ADMIN_SESSION_SECONDS);
-
-  res.json({
-    authenticated: true
-  });
+    return res.status(500).json({
+      success: false,
+      message: "Unable to create admin session.",
+    });
+  }
 });
 
-// ===============================
-// ADMIN SESSION
-// ===============================
-
-app.get(
-  "/api/admin/session",
-  requireAdmin,
-  (req, res) => {
-    res.json({
-      authenticated: true
+// Check whether admin is logged in
+app.get("/api/admin/session", (req, res) => {
+  if (!verifySession(req)) {
+    return res.status(401).json({
+      authenticated: false,
+      message: "Not logged in.",
     });
   }
-);
 
-// ===============================
-// ADMIN LOGOUT
-// ===============================
+  return res.json({ authenticated: true });
+});
 
+// Admin logout
 app.post("/api/admin/logout", (req, res) => {
-  setAdminCookie(res, "", 0);
+  clearAdminCookie(res);
 
-  res.json({
-    authenticated: false
+  return res.json({
+    success: true,
+    message: "Logged out successfully.",
   });
 });
 
-// ===============================
-// ADMIN SUMMARY
-// ===============================
+// --------------------------------------------------
+// ADMIN DASHBOARD APIs
+// --------------------------------------------------
 
-app.get(
-  "/api/admin/summary",
-  requireAdmin,
-  (req, res) => {
-    const sql = `
-      SELECT
-        (SELECT COUNT(*) FROM contact) AS enquiries,
-        (SELECT COUNT(*) FROM feedback) AS feedback,
-        (SELECT AVG(rating) FROM feedback) AS averageRating
-    `;
+// Dashboard counts and average feedback rating
+app.get("/api/admin/summary", requireAdmin, (req, res) => {
+  const sql = `
+    SELECT
+      (SELECT COUNT(*) FROM contact) AS totalContacts,
+      (SELECT COUNT(*) FROM feedback) AS totalFeedback,
+      (SELECT COALESCE(AVG(rating), 0) FROM feedback) AS averageRating
+  `;
 
-    db.query(sql, (err, rows) => {
-      if (err) {
-        console.error(
-          "Admin summary query failed:",
-          err.message
-        );
+  db.query(sql, (error, results) => {
+    if (error) {
+      console.error("Admin summary error:", error);
 
-        return res.status(500).json({
-          message: "Failed to load dashboard summary."
-        });
-      }
-
-      const summary = rows[0];
-
-      res.json({
-        summary: {
-          enquiries: Number(summary.enquiries),
-          feedback: Number(summary.feedback),
-          averageRating:
-            summary.averageRating === null
-              ? 0
-              : Number(summary.averageRating)
-        }
+      return res.status(500).json({
+        success: false,
+        message: "Could not load dashboard summary.",
       });
+    }
+
+    return res.json({
+      success: true,
+      summary: results[0],
     });
-  }
-);
+  });
+});
 
-// ===============================
-// ADMIN CONTACTS
-// ===============================
+// All contact submissions
+app.get("/api/admin/contacts", requireAdmin, (req, res) => {
+  db.query("SELECT * FROM contact ORDER BY id DESC", (error, results) => {
+    if (error) {
+      console.error("Admin contacts error:", error);
 
-app.get(
-  "/api/admin/contacts",
-  requireAdmin,
-  (req, res) => {
-    const sql = `
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        project_type,
-        message
-      FROM contact
-      ORDER BY id DESC
-    `;
-
-    db.query(sql, (err, records) => {
-      if (err) {
-        console.error(
-          "Admin contact query failed:",
-          err.message
-        );
-
-        return res.status(500).json({
-          message: "Failed to load enquiries."
-        });
-      }
-
-      res.json({
-        records
+      return res.status(500).json({
+        success: false,
+        message: "Could not load contacts.",
       });
+    }
+
+    return res.json({
+      success: true,
+      contacts: results,
     });
-  }
-);
+  });
+});
 
-// ===============================
-// ADMIN FEEDBACK
-// ===============================
+// All feedback submissions
+app.get("/api/admin/feedback", requireAdmin, (req, res) => {
+  db.query("SELECT * FROM feedback ORDER BY id DESC", (error, results) => {
+    if (error) {
+      console.error("Admin feedback error:", error);
 
-app.get(
-  "/api/admin/feedback",
-  requireAdmin,
-  (req, res) => {
-    const sql = `
-      SELECT
-        id,
-        name,
-        project_type,
-        rating,
-        feedback
-      FROM feedback
-      ORDER BY id DESC
-    `;
-
-    db.query(sql, (err, records) => {
-      if (err) {
-        console.error(
-          "Admin feedback query failed:",
-          err.message
-        );
-
-        return res.status(500).json({
-          message: "Failed to load feedback."
-        });
-      }
-
-      res.json({
-        records
+      return res.status(500).json({
+        success: false,
+        message: "Could not load feedback.",
       });
-    });
-  }
-);
+    }
 
-// ===============================
-// CONTACT API
-// ===============================
+    return res.json({
+      success: true,
+      feedback: results,
+    });
+  });
+});
+
+// --------------------------------------------------
+// CONTACT FORM API
+// --------------------------------------------------
 
 app.post("/api/contact", (req, res) => {
-  const {
-    name,
-    email,
-    phone,
-    projectType,
-    message
-  } = req.body || {};
+  const { name, email, phone, service, message } = req.body;
 
-  if (
-    typeof name !== "string" ||
-    !name.trim() ||
-    typeof email !== "string" ||
-    !email.trim() ||
-    typeof projectType !== "string" ||
-    !projectType.trim() ||
-    typeof message !== "string" ||
-    !message.trim()
-  ) {
+  if (!name || !email || !message) {
     return res.status(400).json({
-      message: "Please fill all required fields."
+      success: false,
+      message: "Name, email, and message are required.",
     });
   }
 
   const sql = `
-    INSERT INTO contact
-      (name, email, phone, project_type, message)
+    INSERT INTO contact (name, email, phone, service, message)
     VALUES (?, ?, ?, ?, ?)
   `;
 
-  const values = [
-    name.trim(),
-    email.trim(),
-    typeof phone === "string" ? phone.trim() : "",
-    projectType.trim(),
-    message.trim()
-  ];
+  db.query(
+    sql,
+    [
+      String(name).trim(),
+      String(email).trim(),
+      phone || "",
+      service || "",
+      String(message).trim(),
+    ],
+    (error, result) => {
+      if (error) {
+        console.error("Contact insert error:", error);
 
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      console.error(
-        "CONTACT MYSQL ERROR:",
-        err.message
-      );
+        return res.status(500).json({
+          success: false,
+          message: "Could not save contact submission.",
+        });
+      }
 
-      return res.status(500).json({
-        message: "Failed to save contact."
+      return res.status(201).json({
+        success: true,
+        message: "Contact submitted successfully!",
+        id: result.insertId,
       });
     }
-
-    console.log(
-      "Contact saved successfully. ID:",
-      result.insertId
-    );
-
-    res.status(201).json({
-      message: "Contact submitted successfully!",
-      id: result.insertId
-    });
-  });
+  );
 });
 
-// ===============================
-// FEEDBACK API
-// Saves name, project type, rating and feedback
-// ===============================
+// --------------------------------------------------
+// FEEDBACK FORM API
+// --------------------------------------------------
 
 app.post("/api/feedback", (req, res) => {
-  const {
-    name,
-    projectType,
-    rating,
-    feedback
-  } = req.body || {};
-
+  const { name, email, rating, message } = req.body;
   const numericRating = Number(rating);
 
   if (
-    typeof name !== "string" ||
-    !name.trim() ||
-    name.trim().length > 100
-  ) {
-    return res.status(400).json({
-      message: "Please enter a valid name."
-    });
-  }
-
-  if (
-    typeof projectType !== "string" ||
-    !projectType.trim() ||
-    projectType.trim().length > 100
-  ) {
-    return res.status(400).json({
-      message: "Please select a project type."
-    });
-  }
-
-  if (
-    rating === undefined ||
-    rating === null ||
-    rating === "" ||
+    !name ||
+    !email ||
+    !message ||
     !Number.isInteger(numericRating) ||
     numericRating < 1 ||
     numericRating > 5
   ) {
     return res.status(400).json({
-      message: "Rating must be between 1 and 5."
-    });
-  }
-
-  if (
-    typeof feedback !== "string" ||
-    !feedback.trim()
-  ) {
-    return res.status(400).json({
-      message: "Please enter your feedback."
+      success: false,
+      message: "Enter your name, email, message, and a rating from 1 to 5.",
     });
   }
 
   const sql = `
-    INSERT INTO feedback
-      (name, project_type, rating, feedback)
+    INSERT INTO feedback (name, email, rating, message)
     VALUES (?, ?, ?, ?)
   `;
 
-  const values = [
-    name.trim(),
-    projectType.trim(),
-    numericRating,
-    feedback.trim()
-  ];
+  db.query(
+    sql,
+    [
+      String(name).trim(),
+      String(email).trim(),
+      numericRating,
+      String(message).trim(),
+    ],
+    (error, result) => {
+      if (error) {
+        console.error("Feedback insert error:", error);
 
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      console.error(
-        "MySQL Feedback Error:",
-        err.message
-      );
+        return res.status(500).json({
+          success: false,
+          message: "Could not save feedback.",
+        });
+      }
 
-      return res.status(500).json({
-        message: "Failed to save feedback."
+      return res.status(201).json({
+        success: true,
+        message: "Feedback submitted successfully!",
+        id: result.insertId,
       });
     }
-
-    console.log(
-      "Feedback saved successfully. ID:",
-      result.insertId
-    );
-
-    res.status(201).json({
-      message: "Feedback submitted successfully!",
-      id: result.insertId
-    });
-  });
+  );
 });
 
-// ===============================
-// TEST API
-// ===============================
+// --------------------------------------------------
+// BACKEND TEST ROUTE
+// --------------------------------------------------
 
 app.get("/api/test", (req, res) => {
   res.json({
-    message: "Backend is working!"
+    success: true,
+    message: "Backend is working!",
   });
 });
 
-// ===============================
-// SERVE REACT BUILD
-// ===============================
+// Unknown API routes must return JSON, not frontend HTML
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "API route not found.",
+  });
+});
 
-const buildPath = path.join(
-  __dirname,
-  "..",
-  "build"
-);
+// --------------------------------------------------
+// SERVE REACT FRONTEND (LOCAL BUILD)
+// --------------------------------------------------
+
+const buildPath = path.join(__dirname, "..", "build");
 
 app.use(express.static(buildPath));
 
-// ===============================
-// REACT ROUTES
-// ===============================
-
-app.use((req, res, next) => {
+app.get("*", (req, res, next) => {
+  // Never return index.html for an API request
   if (req.path.startsWith("/api/")) {
-    return res.status(404).json({
-      message: "API route not found"
-    });
+    return next();
   }
 
-  if (req.method === "GET") {
-    return res.sendFile(
-      path.join(buildPath, "index.html"),
-      (err) => {
-        if (err && !res.headersSent) {
-          next(err);
-        }
+  res.sendFile(path.join(buildPath, "index.html"), (error) => {
+    if (error) {
+      console.error("Frontend build not found:", error.message);
+
+      if (!res.headersSent) {
+        res.status(404).send("Frontend build not found. Run npm run build.");
       }
-    );
-  }
-
-  next();
+    }
+  });
 });
 
-// ===============================
+// --------------------------------------------------
 // START SERVER
-// ===============================
+// --------------------------------------------------
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
