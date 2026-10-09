@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const crypto = require("crypto");
 const session = require("express-session");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -9,8 +8,11 @@ const app = express();
 const db = require("./config/db");
 
 const PORT = process.env.PORT || 8080;
-const CLIENT_URL = process.env.CLIENT_URL || "https://construction-mocha.vercel.app";
 
+const CLIENT_URL =
+  process.env.CLIENT_URL || "https://construction-mocha.vercel.app";
+
+// CORS
 app.use(
   cors({
     origin: [
@@ -30,7 +32,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
     name: "admin_session",
-    secret: process.env.ADMIN_SESSION_SECRET || "change-this-session-secret-before-production",
+    secret:
+      process.env.ADMIN_SESSION_SECRET ||
+      "change-this-session-secret-before-production",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -42,23 +46,35 @@ app.use(
   })
 );
 
-// Basic health checks
+// Home and health-check routes
 app.get("/", (req, res) => {
-  res.json({ success: true, message: "Construction backend is running!" });
+  res.json({
+    success: true,
+    message: "Construction backend is running!",
+  });
 });
 
 app.get("/api/test", (req, res) => {
-  res.json({ success: true, message: "Backend is working!" });
+  res.json({
+    success: true,
+    message: "Backend is working!",
+  });
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ success: true, message: "Server is healthy" });
+  res.json({
+    success: true,
+    message: "Server is healthy",
+  });
 });
 
-// Contact form
-// IMPORTANT: The contact table must have name, email, phone, message columns.
+// CONTACT FORM
+// Database columns: name, email, phone, project_type, message
 app.post("/api/contact", (req, res) => {
   const { name, email, phone, message } = req.body;
+
+  const projectType =
+    req.body.project_type || req.body.projectType || "";
 
   if (!name || !email || !message) {
     return res.status(400).json({
@@ -68,8 +84,9 @@ app.post("/api/contact", (req, res) => {
   }
 
   const sql = `
-    INSERT INTO contact (name, email, phone, message)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO contact
+      (name, email, phone, project_type, message)
+    VALUES (?, ?, ?, ?, ?)
   `;
 
   db.query(
@@ -78,11 +95,13 @@ app.post("/api/contact", (req, res) => {
       String(name).trim(),
       String(email).trim(),
       phone ? String(phone).trim() : "",
+      String(projectType).trim(),
       String(message).trim(),
     ],
     (err, result) => {
       if (err) {
         console.error("Contact insert error:", err);
+
         return res.status(500).json({
           success: false,
           message: "Could not save contact submission",
@@ -98,11 +117,16 @@ app.post("/api/contact", (req, res) => {
   );
 });
 
-// Feedback form
+// FEEDBACK FORM
 app.post("/api/feedback", (req, res) => {
   const { name, rating, message } = req.body;
 
-  if (!name || rating === undefined || rating === null || !message) {
+  if (
+    !name ||
+    rating === undefined ||
+    rating === null ||
+    !message
+  ) {
     return res.status(400).json({
       success: false,
       message: "Name, rating, and message are required.",
@@ -111,7 +135,11 @@ app.post("/api/feedback", (req, res) => {
 
   const numericRating = Number(rating);
 
-  if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+  if (
+    !Number.isInteger(numericRating) ||
+    numericRating < 1 ||
+    numericRating > 5
+  ) {
     return res.status(400).json({
       success: false,
       message: "Rating must be a number from 1 to 5.",
@@ -129,6 +157,7 @@ app.post("/api/feedback", (req, res) => {
     (err, result) => {
       if (err) {
         console.error("Feedback insert error:", err);
+
         return res.status(500).json({
           success: false,
           message: "Could not save feedback",
@@ -144,7 +173,7 @@ app.post("/api/feedback", (req, res) => {
   );
 });
 
-// Admin login
+// ADMIN LOGIN
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
 
@@ -174,11 +203,14 @@ app.post("/api/admin/login", (req, res) => {
     });
   }
 
-  req.session.admin = { username: process.env.ADMIN_USERNAME };
+  req.session.admin = {
+    username: process.env.ADMIN_USERNAME,
+  };
 
   req.session.save((err) => {
     if (err) {
       console.error("Admin session error:", err);
+
       return res.status(500).json({
         success: false,
         message: "Could not create admin session.",
@@ -192,7 +224,7 @@ app.post("/api/admin/login", (req, res) => {
   });
 });
 
-// Check admin session
+// CHECK ADMIN SESSION
 app.get("/api/admin/session", (req, res) => {
   if (!req.session.admin) {
     return res.status(401).json({
@@ -207,11 +239,12 @@ app.get("/api/admin/session", (req, res) => {
   });
 });
 
-// Admin logout
+// ADMIN LOGOUT
 app.post("/api/admin/logout", (req, res) => {
   req.session.destroy((err) => {
     if (err) {
       console.error("Admin logout error:", err);
+
       return res.status(500).json({
         success: false,
         message: "Could not log out.",
@@ -219,6 +252,7 @@ app.post("/api/admin/logout", (req, res) => {
     }
 
     res.clearCookie("admin_session");
+
     return res.json({
       success: true,
       message: "Logged out successfully.",
@@ -238,7 +272,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Admin dashboard summary
+// ADMIN DASHBOARD SUMMARY
 app.get("/api/admin/summary", requireAdmin, (req, res) => {
   const sql = `
     SELECT
@@ -250,6 +284,7 @@ app.get("/api/admin/summary", requireAdmin, (req, res) => {
   db.query(sql, (err, rows) => {
     if (err) {
       console.error("Admin summary error:", err);
+
       return res.status(500).json({
         success: false,
         message: "Could not load dashboard summary.",
@@ -263,52 +298,63 @@ app.get("/api/admin/summary", requireAdmin, (req, res) => {
   });
 });
 
-// Admin contacts
+// ADMIN CONTACTS
 app.get("/api/admin/contacts", requireAdmin, (req, res) => {
   db.query("SELECT * FROM contact ORDER BY id DESC", (err, rows) => {
     if (err) {
       console.error("Admin contacts error:", err);
+
       return res.status(500).json({
         success: false,
         message: "Could not load contacts.",
       });
     }
 
-    return res.json({ success: true, contacts: rows });
+    return res.json({
+      success: true,
+      contacts: rows,
+    });
   });
 });
 
-// Admin feedback
+// ADMIN FEEDBACK
 app.get("/api/admin/feedback", requireAdmin, (req, res) => {
   db.query("SELECT * FROM feedback ORDER BY id DESC", (err, rows) => {
     if (err) {
       console.error("Admin feedback error:", err);
+
       return res.status(500).json({
         success: false,
         message: "Could not load feedback.",
       });
     }
 
-    return res.json({ success: true, feedback: rows });
+    return res.json({
+      success: true,
+      feedback: rows,
+    });
   });
 });
 
-// Serve the React build if it exists
+// Serve React build if it exists
 const buildPath = path.join(__dirname, "..", "build");
+
 app.use(express.static(buildPath));
 
-// Unknown API endpoints
+// Unknown API routes
 app.use("/api", (req, res) => {
-  res.status(404).json({
+  return res.status(404).json({
     success: false,
     message: "API endpoint not found.",
   });
 });
 
-// React frontend fallback (Express 5 syntax)
+// React frontend fallback (Express 5)
 app.get("/{*splat}", (req, res, next) => {
   res.sendFile(path.join(buildPath, "index.html"), (err) => {
-    if (err) next(err);
+    if (err) {
+      next(err);
+    }
   });
 });
 
@@ -326,6 +372,7 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Start server
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
