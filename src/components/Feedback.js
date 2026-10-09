@@ -21,10 +21,14 @@ function Feedback() {
       name: form.elements.name.value.trim(),
       projectType: form.elements.projectType.value,
       rating: rating,
-      feedback: form.elements.feedback.value.trim()
+      message: form.elements.feedback.value.trim()
     };
 
-    if (!data.name || !data.projectType || !data.feedback) {
+    if (
+      !data.name ||
+      !data.projectType ||
+      !data.message
+    ) {
       alert('Please fill in all fields.');
       return;
     }
