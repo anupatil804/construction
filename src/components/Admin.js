@@ -1,542 +1,424 @@
 
-import { useCallback, useEffect, useState } from 'react';
-import './Admin.css';
+const express = require("express");
+const cors = require("cors");
+const session = require("express-session");
+const path = require("path");
+require("dotenv").config({
+  path: path.join(__dirname, ".env"),
+});
 
-const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
+const db = require("./config/db");
 
-const sections = [
-  { id: 'contacts', label: 'Enquiries' },
-  { id: 'feedback', label: 'Feedback' },
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Trust Railway's reverse proxy for secure session cookies.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+// Allowed frontend origins.
+const allowedOrigins = [
+  "https://construction-mocha.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:3001",
 ];
 
-async function readJsonResponse(response) {
-  const contentType = response.headers.get('content-type') || '';
-
-  if (!contentType.includes('application/json')) {
-    throw new Error(
-      'The backend did not return JSON. Check your Railway API URL and backend routes.'
-    );
-  }
-
-  return response.json();
+if (process.env.CLIENT_URL) {
+  allowedOrigins.push(process.env.CLIENT_URL.replace(/\/$/, ""));
 }
 
-export default function Admin() {
-  const [admin, setAdmin] = useState(null);
-  const [loginForm, setLoginForm] = useState({
-    username: '',
-    password: '',
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests without an Origin header, such as server health checks.
+      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Admin session configuration.
+app.use(
+  session({
+    name: "admin_session",
+    secret:
+      process.env.ADMIN_SESSION_SECRET ||
+      "development-only-change-this-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite:
+        process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  })
+);
+
+// Health check.
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Construction backend is running",
   });
+});
 
-  const [loginError, setLoginError] = useState('');
-  const [loadingLogin, setLoadingLogin] = useState(false);
-
-  const [activeSection, setActiveSection] = useState('contacts');
-  const [records, setRecords] = useState([]);
-  const [loadingRecords, setLoadingRecords] = useState(false);
-  const [recordsError, setRecordsError] = useState('');
-
-  const [summary, setSummary] = useState({
-    enquiries: 0,
-    feedback: 0,
-    averageRating: 0,
+app.get("/api/test", (req, res) => {
+  res.json({
+    success: true,
+    message: "API is working",
   });
-  const [summaryError, setSummaryError] = useState('');
-  const [loadingSummary, setLoadingSummary] = useState(false);
+});
 
-  const [loggingOut, setLoggingOut] = useState(false);
+app.get("/api/health", (req, res) => {
+  res.json({
+    success: true,
+    message: "Server is healthy",
+  });
+});
 
-  // Check whether an admin session already exists.
-  useEffect(() => {
-    let cancelled = false;
+// Submit a contact enquiry.
+app.post("/api/contact", (req, res) => {
+  const {
+    name,
+    email,
+    phone,
+    message,
+  } = req.body;
 
-    async function checkSession() {
-      try {
-        const response = await fetch(`${API_URL}/api/admin/session`, {
-          method: 'GET',
-          credentials: 'include',
+  const projectType =
+    req.body.projectType || req.body.project_type || "";
+
+  if (!name || !email || !message) {
+    return res.status(400).json({
+      success: false,
+      message: "Name, email and message are required.",
+    });
+  }
+
+  const sql = `
+    INSERT INTO contacts
+      (name, email, phone, project_type, message)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+
+  db.query(
+    sql,
+    [name, email, phone || "", projectType, message],
+    (error, result) => {
+      if (error) {
+        console.error("Contact insert error:", error.message);
+
+        return res.status(500).json({
+          success: false,
+          message: "Could not save your enquiry.",
         });
-
-        const result = await readJsonResponse(response);
-
-        if (!cancelled && response.ok && result.success && result.admin) {
-          setAdmin(result.admin);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error('Session check failed:', error);
-        }
       }
-    }
 
-    checkSession();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Load dashboard summary.
-  const loadSummary = useCallback(async () => {
-    setLoadingSummary(true);
-    setSummaryError('');
-
-    try {
-      const response = await fetch(`${API_URL}/api/admin/summary`, {
-        method: 'GET',
-        credentials: 'include',
+      return res.status(201).json({
+        success: true,
+        message: "Contact submitted successfully!",
+        id: result.insertId,
       });
-
-      const result = await readJsonResponse(response);
-
-      if (response.status === 401) {
-        setAdmin(null);
-        throw new Error('Your session has expired. Please log in again.');
-      }
-
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.message || 'Failed to load dashboard summary.'
-        );
-      }
-
-      const summaryData = result.summary || result;
-
-      setSummary({
-        enquiries: Number(summaryData.totalContacts ?? summaryData.enquiries ?? 0),
-        feedback: Number(summaryData.totalFeedback ?? summaryData.feedback ?? 0),
-        averageRating: Number(summaryData.averageRating ?? 0),
-      });
-    } catch (error) {
-      console.error('Dashboard summary error:', error);
-      setSummaryError(error.message || 'Failed to load dashboard summary.');
-    } finally {
-      setLoadingSummary(false);
     }
-  }, []);
-
-  // Load enquiries or feedback records.
-  const loadRecords = useCallback(async () => {
-    setLoadingRecords(true);
-    setRecordsError('');
-
-    try {
-      const response = await fetch(
-        `${API_URL}/api/admin/${activeSection}`,
-        {
-          method: 'GET',
-          credentials: 'include',
-        }
-      );
-
-      const result = await readJsonResponse(response);
-
-      if (response.status === 401) {
-        setAdmin(null);
-        throw new Error('Your session has expired. Please log in again.');
-      }
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || 'Failed to load records.');
-      }
-
-      // The backend returns "contacts" for enquiries and "feedback" for feedback.
-      const data =
-        activeSection === 'contacts'
-          ? result.contacts
-          : result.feedback;
-
-      setRecords(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Records loading error:', error);
-      setRecords([]);
-      setRecordsError(error.message || 'Failed to load records.');
-    } finally {
-      setLoadingRecords(false);
-    }
-  }, [activeSection]);
-
-  // Load data after successful login.
-  useEffect(() => {
-    if (!admin) return;
-
-    loadSummary();
-  }, [admin, loadSummary]);
-
-  useEffect(() => {
-    if (!admin) return;
-
-    loadRecords();
-  }, [admin, loadRecords]);
-
-  // Admin login.
-  async function handleLogin(event) {
-    event.preventDefault();
-    setLoginError('');
-    setLoadingLogin(true);
-
-    try {
-      const response = await fetch(`${API_URL}/api/admin/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(loginForm),
-      });
-
-      const result = await readJsonResponse(response);
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || 'Login failed.');
-      }
-
-      setAdmin(
-        result.admin || {
-          username: loginForm.username,
-        }
-      );
-
-      setLoginForm({
-        username: '',
-        password: '',
-      });
-    } catch (error) {
-      console.error('Login error:', error);
-      setLoginError(error.message || 'Unable to log in. Please try again.');
-    } finally {
-      setLoadingLogin(false);
-    }
-  }
-
-  // Admin logout.
-  async function handleLogout() {
-    setLoggingOut(true);
-
-    try {
-      const response = await fetch(`${API_URL}/api/admin/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      const result = await readJsonResponse(response);
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || 'Logout failed.');
-      }
-
-      setAdmin(null);
-      setRecords([]);
-      setSummary({
-        enquiries: 0,
-        feedback: 0,
-        averageRating: 0,
-      });
-    } catch (error) {
-      console.error('Logout error:', error);
-      setRecordsError(error.message || 'Unable to log out.');
-    } finally {
-      setLoggingOut(false);
-    }
-  }
-
-  function formatDate(value) {
-    if (!value) return '—';
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
-    }
-
-    return date.toLocaleString();
-  }
-
-  // Login screen.
-  if (!admin) {
-    return (
-      <main className="admin-page">
-        <section className="admin-login">
-          <h1>Admin Login</h1>
-          <p>Log in to manage project enquiries and client feedback.</p>
-
-          <form onSubmit={handleLogin}>
-            <div className="form-group">
-              <label htmlFor="admin-username">Username</label>
-              <input
-                id="admin-username"
-                type="text"
-                autoComplete="username"
-                value={loginForm.username}
-                onChange={(event) =>
-                  setLoginForm({
-                    ...loginForm,
-                    username: event.target.value,
-                  })
-                }
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="admin-password">Password</label>
-              <input
-                id="admin-password"
-                type="password"
-                autoComplete="current-password"
-                value={loginForm.password}
-                onChange={(event) =>
-                  setLoginForm({
-                    ...loginForm,
-                    password: event.target.value,
-                  })
-                }
-                required
-              />
-            </div>
-
-            {loginError && (
-              <p className="admin-error" role="alert">
-                {loginError}
-              </p>
-            )}
-
-            <button type="submit" disabled={loadingLogin}>
-              {loadingLogin ? 'Logging in...' : 'Login'}
-            </button>
-          </form>
-        </section>
-      </main>
-    );
-  }
-
-  // Admin dashboard.
-  return (
-    <main className="admin-page">
-      <div className="admin-header">
-        <div>
-          <h1>Admin Dashboard</h1>
-          <p>
-            Welcome, {admin.username || 'Admin'}. Manage your website enquiries
-            and feedback.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleLogout}
-          disabled={loggingOut}
-        >
-          {loggingOut ? 'Logging out...' : 'Logout'}
-        </button>
-      </div>
-
-      <section className="admin-summary">
-        <article className="summary-card">
-          <h2>Project Enquiries</h2>
-          <p className="summary-number">
-            {loadingSummary ? '...' : summary.enquiries}
-          </p>
-          <span>Total enquiries received</span>
-        </article>
-
-        <article className="summary-card">
-          <h2>Client Feedback</h2>
-          <p className="summary-number">
-            {loadingSummary ? '...' : summary.feedback}
-          </p>
-          <span>Total feedback received</span>
-        </article>
-
-        <article className="summary-card">
-          <h2>Average Rating</h2>
-          <p className="summary-number">
-            {loadingSummary ? '...' : summary.averageRating.toFixed(1)}
-            <span> / 5</span>
-          </p>
-          <div
-            className="admin-stars"
-            aria-label={`Average rating ${summary.averageRating.toFixed(1)} out of 5`}
-          >
-            {'★'.repeat(
-              Math.max(
-                0,
-                Math.min(5, Math.round(summary.averageRating))
-              )
-            )}
-            {'☆'.repeat(
-              5 -
-                Math.max(
-                  0,
-                  Math.min(5, Math.round(summary.averageRating))
-                )
-            )}
-          </div>
-        </article>
-      </section>
-
-      {summaryError && (
-        <div className="admin-error" role="alert">
-          {summaryError}
-          <button type="button" onClick={loadSummary}>
-            Try again
-          </button>
-        </div>
-      )}
-
-      <section className="admin-records">
-        <div className="admin-records-header">
-          <div>
-            <h2>
-              {activeSection === 'contacts'
-                ? 'Project Enquiries'
-                : 'Client Feedback'}
-            </h2>
-            <p>
-              {records.length}{' '}
-              {records.length === 1 ? 'record' : 'records'}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              loadRecords();
-              loadSummary();
-            }}
-            disabled={loadingRecords || loadingSummary}
-          >
-            {loadingRecords || loadingSummary ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-
-        <nav className="admin-tabs" aria-label="Dashboard sections">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              className={
-                activeSection === section.id ? 'active' : ''
-              }
-              onClick={() => setActiveSection(section.id)}
-            >
-              {section.label}
-            </button>
-          ))}
-        </nav>
-
-        {recordsError && (
-          <div className="admin-error" role="alert">
-            {recordsError}
-            <button type="button" onClick={loadRecords}>
-              Try again
-            </button>
-          </div>
-        )}
-
-        {loadingRecords ? (
-          <p className="admin-loading">Loading records...</p>
-        ) : recordsError ? null : records.length === 0 ? (
-          <div className="admin-empty">
-            <h3>Nothing here yet</h3>
-            <p>
-              {activeSection === 'contacts'
-                ? 'New enquiries will appear here.'
-                : 'New client feedback will appear here.'}
-            </p>
-          </div>
-        ) : activeSection === 'contacts' ? (
-          <div className="admin-table-wrapper">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Phone</th>
-                  <th>Project Type</th>
-                  <th>Message</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {records.map((record, index) => (
-                  <tr key={record.id ?? index}>
-                    <td>{record.name || '—'}</td>
-                    <td>{record.email || '—'}</td>
-                    <td>{record.phone || '—'}</td>
-                    <td>
-                      {record.project_type ||
-                        record.projectType ||
-                        '—'}
-                    </td>
-                    <td>
-                      {record.message ||
-                        record.description ||
-                        '—'}
-                    </td>
-                    <td>
-                      {formatDate(
-                        record.created_at ||
-                          record.createdAt ||
-                          record.date
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="admin-feedback-list">
-            {records.map((record, index) => (
-              <article
-                className="admin-feedback-card"
-                key={record.id ?? index}
-              >
-                <div className="admin-feedback-header">
-                  <h3>{record.name || 'Anonymous'}</h3>
-                  <span className="admin-rating">
-                    {'★'.repeat(
-                      Math.max(
-                        0,
-                        Math.min(5, Number(record.rating) || 0)
-                      )
-                    )}
-                    {'☆'.repeat(
-                      5 -
-                        Math.max(
-                          0,
-                          Math.min(5, Number(record.rating) || 0)
-                        )
-                    )}
-                  </span>
-                </div>
-
-                <p>
-                  {record.feedback ||
-                    record.message ||
-                    'No feedback text provided.'}
-                </p>
-
-                {record.project_type && (
-                  <p>
-                    <strong>Project:</strong> {record.project_type}
-                  </p>
-                )}
-
-                <small>
-                  {formatDate(
-                    record.created_at ||
-                      record.createdAt ||
-                      record.date
-                  )}
-                </small>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-    </main>
   );
+});
+
+// Submit client feedback.
+app.post("/api/feedback", (req, res) => {
+  const { name, rating } = req.body;
+
+  const feedbackText =
+    req.body.feedback || req.body.message || "";
+
+  const projectType =
+    req.body.projectType || req.body.project_type || "";
+
+  const numericRating = Number(rating);
+
+  if (
+    !name ||
+    !feedbackText ||
+    !Number.isInteger(numericRating) ||
+    numericRating < 1 ||
+    numericRating > 5
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Please provide your name, feedback and a rating from 1 to 5.",
+    });
+  }
+
+  const sql = `
+    INSERT INTO feedback
+      (name, rating, feedback, project_type)
+    VALUES (?, ?, ?, ?)
+  `;
+
+  db.query(
+    sql,
+    [name, numericRating, feedbackText, projectType],
+    (error, result) => {
+      if (error) {
+        console.error("Feedback insert error:", error.message);
+
+        return res.status(500).json({
+          success: false,
+          message: "Could not save feedback.",
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Feedback submitted successfully!",
+        id: result.insertId,
+      });
+    }
+  );
+});
+
+// Admin login.
+app.post("/api/admin/login", (req, res) => {
+  const configuredUsername = process.env.ADMIN_USERNAME;
+  const configuredPassword = process.env.ADMIN_PASSWORD;
+
+  if (!configuredUsername || !configuredPassword) {
+    console.error("Admin login environment variables are missing.");
+
+    return res.status(500).json({
+      success: false,
+      message: "Admin login is not configured on the server.",
+    });
+  }
+
+  const username =
+    typeof req.body.username === "string"
+      ? req.body.username.trim()
+      : "";
+
+  const password =
+    typeof req.body.password === "string"
+      ? req.body.password
+      : "";
+
+  if (
+    username !== configuredUsername.trim() ||
+    password !== configuredPassword
+  ) {
+    return res.status(401).json({
+      success: false,
+      message: "Incorrect username or password.",
+    });
+  }
+
+  // Regenerate the session after successful authentication.
+  req.session.regenerate((error) => {
+    if (error) {
+      console.error("Admin session error:", error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: "Could not create an admin session.",
+      });
+    }
+
+    req.session.admin = {
+      username: configuredUsername.trim(),
+    };
+
+    req.session.save((saveError) => {
+      if (saveError) {
+        console.error("Admin session save error:", saveError.message);
+
+        return res.status(500).json({
+          success: false,
+          message: "Could not save the admin session.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Login successful.",
+        admin: {
+          username: configuredUsername.trim(),
+        },
+      });
+    });
+  });
+});
+
+// Check the current admin session.
+app.get("/api/admin/session", (req, res) => {
+  if (!req.session || !req.session.admin) {
+    return res.status(401).json({
+      success: false,
+      message: "Not logged in.",
+    });
+  }
+
+  return res.json({
+    success: true,
+    admin: req.session.admin,
+  });
+});
+
+// Protect admin-only API routes.
+function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.admin) {
+    return res.status(401).json({
+      success: false,
+      message: "Please log in as admin.",
+    });
+  }
+
+  next();
 }
+
+// Admin dashboard summary.
+app.get("/api/admin/summary", requireAdmin, (req, res) => {
+  const sql = `
+    SELECT
+      (SELECT COUNT(*) FROM contacts) AS totalContacts,
+      (SELECT COUNT(*) FROM feedback) AS totalFeedback,
+      (SELECT COALESCE(AVG(rating), 0) FROM feedback) AS averageRating
+  `;
+
+  db.query(sql, (error, rows) => {
+    if (error) {
+      console.error("Dashboard summary error:", error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load dashboard summary.",
+      });
+    }
+
+    const row = rows[0] || {};
+
+    return res.json({
+      success: true,
+      summary: {
+        totalContacts: Number(row.totalContacts || 0),
+        totalFeedback: Number(row.totalFeedback || 0),
+        averageRating: Number(row.averageRating || 0),
+      },
+    });
+  });
+});
+
+// Get all project enquiries.
+app.get("/api/admin/contacts", requireAdmin, (req, res) => {
+  const sql = "SELECT * FROM contacts ORDER BY id DESC";
+
+  db.query(sql, (error, rows) => {
+    if (error) {
+      console.error("Load contacts error:", error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load enquiries.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      contacts: rows,
+    });
+  });
+});
+
+// Get all client feedback.
+app.get("/api/admin/feedback", requireAdmin, (req, res) => {
+  const sql = "SELECT * FROM feedback ORDER BY id DESC";
+
+  db.query(sql, (error, rows) => {
+    if (error) {
+      console.error("Load feedback error:", error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load feedback.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      feedback: rows,
+    });
+  });
+});
+
+// Admin logout.
+app.post("/api/admin/logout", (req, res) => {
+  if (!req.session) {
+    return res.json({
+      success: true,
+      message: "Logged out successfully.",
+    });
+  }
+
+  req.session.destroy((error) => {
+    if (error) {
+      console.error("Admin logout error:", error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: "Could not log out.",
+      });
+    }
+
+    res.clearCookie("admin_session", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite:
+        process.env.NODE_ENV === "production" ? "none" : "lax",
+    });
+
+    return res.json({
+      success: true,
+      message: "Logged out successfully.",
+    });
+  });
+});
+
+// Return JSON for unknown API routes.
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "API endpoint not found.",
+  });
+});
+
+// Optional: serve a React production build if one exists.
+const buildPath = path.join(__dirname, "..", "build");
+
+app.use(express.static(buildPath));
+
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    return next();
+  }
+
+  res.sendFile(path.join(buildPath, "index.html"), (error) => {
+    if (error) {
+      return res.status(404).send(
+        "Backend is running. The React build was not found."
+      );
+    }
+  });
+});
+
+// Start the server.
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+});

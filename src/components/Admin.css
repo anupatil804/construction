@@ -1246,3 +1246,35 @@ button.admin-stat-card:hover {
     border-radius: 6px;
   }
 }
+
+.admin-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #efd8d2;
+  border-radius: 4px;
+  background: #fff9f7;
+}
+
+.admin-error button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid #e4c8c1;
+  border-radius: 3px;
+  background: #fff;
+  color: #8a3d32;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.admin-error button:hover {
+  background: #fff1ed;
+}
+
+.admin-records .admin-loading {
+  width: auto;
+  margin: 10px 0 0;
+}
