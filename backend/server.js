@@ -1,3 +1,4 @@
+
 const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
@@ -8,7 +9,7 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 const db = require("./config/db");
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // --------------------------------------------------
 // CORS CONFIGURATION
@@ -75,6 +76,7 @@ function signSession(payload) {
 
 function getCookie(req, name) {
   const cookieHeader = req.headers.cookie;
+
   if (!cookieHeader) return null;
 
   const cookie = cookieHeader
@@ -99,18 +101,27 @@ function createSession(username) {
 function verifySession(req) {
   try {
     const token = getCookie(req, COOKIE_NAME);
+
     if (!token) return false;
 
     const parts = token.split(".");
+
     if (parts.length !== 2) return false;
 
     const [encodedPayload, receivedSignature] = parts;
-    const payload = Buffer.from(encodedPayload, "base64url").toString("utf8");
+    const payload = Buffer.from(
+      encodedPayload,
+      "base64url"
+    ).toString("utf8");
+
     const expectedSignature = signSession(payload);
 
-    if (!safeEqual(receivedSignature, expectedSignature)) return false;
+    if (!safeEqual(receivedSignature, expectedSignature)) {
+      return false;
+    }
 
     const separator = payload.lastIndexOf("|");
+
     if (separator === -1) return false;
 
     const username = payload.slice(0, separator);
@@ -161,6 +172,35 @@ function requireAdmin(req, res, next) {
 }
 
 // --------------------------------------------------
+// BASIC HEALTH CHECK
+// --------------------------------------------------
+
+app.get("/api/test", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Backend is working!",
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Server is healthy.",
+  });
+});
+
+// --------------------------------------------------
+// ROOT ROUTE
+// --------------------------------------------------
+
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Construction backend is running!",
+  });
+});
+
+// --------------------------------------------------
 // ADMIN LOGIN, SESSION AND LOGOUT
 // --------------------------------------------------
 
@@ -185,7 +225,9 @@ app.post("/api/admin/login", (req, res) => {
   }
 
   try {
-    setAdminCookie(res, createSession(process.env.ADMIN_USERNAME));
+    const token = createSession(process.env.ADMIN_USERNAME);
+
+    setAdminCookie(res, token);
 
     return res.json({
       success: true,
@@ -388,17 +430,9 @@ app.post("/api/feedback", (req, res) => {
 });
 
 // --------------------------------------------------
-// BACKEND TEST
+// UNKNOWN API ROUTES
 // --------------------------------------------------
 
-app.get("/api/test", (req, res) => {
-  res.json({
-    success: true,
-    message: "Backend is working!",
-  });
-});
-
-// API requests that do not match a route return JSON
 app.use("/api", (req, res) => {
   res.status(404).json({
     success: false,
@@ -407,15 +441,13 @@ app.use("/api", (req, res) => {
 });
 
 // --------------------------------------------------
-// SERVE REACT BUILD WHEN AVAILABLE
+// SERVE REACT BUILD IF AVAILABLE
 // --------------------------------------------------
 
 const buildPath = path.join(__dirname, "..", "build");
 
 app.use(express.static(buildPath));
 
-// Express 5 compatible wildcard route.
-// Do not change this to app.get("*", ...).
 app.get("/{*splat}", (req, res) => {
   res.sendFile(path.join(buildPath, "index.html"), (error) => {
     if (error) {
@@ -429,9 +461,31 @@ app.get("/{*splat}", (req, res) => {
 });
 
 // --------------------------------------------------
-// START SERVER ON RAILWAY
+// ERROR HANDLER
 // --------------------------------------------------
 
-app.listen(PORT, "0.0.0.0", () => {
+app.use((error, req, res, next) => {
+  console.error("Request error:", error.message);
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  res.status(500).json({
+    success: false,
+    message: "Internal server error.",
+  });
+});
+
+// --------------------------------------------------
+// START SERVER
+// --------------------------------------------------
+
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+});
+
+server.on("error", (error) => {
+  console.error("Server startup error:", error);
 });
