@@ -81,7 +81,14 @@ app.post("/api/contact", (req, res) => {
   const projectType =
     req.body.project_type || req.body.projectType || "";
 
-  if (!name || !email || !message) {
+  if (
+    !name ||
+    !String(name).trim() ||
+    !email ||
+    !String(email).trim() ||
+    !message ||
+    !String(message).trim()
+  ) {
     return res.status(400).json({
       success: false,
       message: "Name, email, and message are required.",
@@ -123,18 +130,40 @@ app.post("/api/contact", (req, res) => {
 });
 
 // FEEDBACK FORM
+// Database columns: id, rating, feedback, name, project_type
 app.post("/api/feedback", (req, res) => {
-  const { name, rating, message } = req.body;
+  const name = req.body.name;
+  const rating = req.body.rating;
+
+  // Accept either "feedback" or "message" from the frontend
+  const feedbackText = req.body.feedback || req.body.message || "";
+
+  // Accept either projectType or project_type
+  const projectType =
+    req.body.projectType || req.body.project_type || "";
+
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Name is required.",
+    });
+  }
 
   if (
-    !name ||
     rating === undefined ||
     rating === null ||
-    !message
+    rating === ""
   ) {
     return res.status(400).json({
       success: false,
-      message: "Name, rating, and message are required.",
+      message: "Rating is required.",
+    });
+  }
+
+  if (!feedbackText || !String(feedbackText).trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Feedback is required.",
     });
   }
 
@@ -152,34 +181,38 @@ app.post("/api/feedback", (req, res) => {
   }
 
   const sql = `
-    INSERT INTO feedback (name, rating, message)
-    VALUES (?, ?, ?)
+    INSERT INTO feedback
+      (name, rating, feedback, project_type)
+    VALUES (?, ?, ?, ?)
   `;
 
-  db.query(
-    sql,
-    [String(name).trim(), numericRating, String(message).trim()],
-    (err, result) => {
-      if (err) {
-        console.error("Feedback insert error:", err);
+  const values = [
+    String(name).trim(),
+    numericRating,
+    String(feedbackText).trim(),
+    String(projectType).trim(),
+  ];
 
-        return res.status(500).json({
-          success: false,
-          message: "Could not save feedback.",
-        });
-      }
+  db.query(sql, values, (err, result) => {
+    if (err) {
+      console.error("Feedback insert error:", err);
 
-      return res.status(201).json({
-        success: true,
-        message: "Feedback submitted successfully!",
-        id: result.insertId,
+      return res.status(500).json({
+        success: false,
+        message: "Could not save feedback.",
       });
     }
-  );
+
+    return res.status(201).json({
+      success: true,
+      message: "Feedback submitted successfully!",
+      id: result.insertId,
+    });
+  });
 });
 
 // ADMIN LOGIN
-app.post("/api/admin/login", (req, res, next) => {
+app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
 
   if (
@@ -326,40 +359,46 @@ app.get("/api/admin/summary", requireAdmin, (req, res) => {
 
 // ADMIN CONTACTS
 app.get("/api/admin/contacts", requireAdmin, (req, res) => {
-  db.query("SELECT * FROM contact ORDER BY id DESC", (err, rows) => {
-    if (err) {
-      console.error("Admin contacts error:", err);
+  db.query(
+    "SELECT * FROM contact ORDER BY id DESC",
+    (err, rows) => {
+      if (err) {
+        console.error("Admin contacts error:", err);
 
-      return res.status(500).json({
-        success: false,
-        message: "Could not load contacts.",
+        return res.status(500).json({
+          success: false,
+          message: "Could not load contacts.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        contacts: rows,
       });
     }
-
-    return res.json({
-      success: true,
-      contacts: rows,
-    });
-  });
+  );
 });
 
 // ADMIN FEEDBACK
 app.get("/api/admin/feedback", requireAdmin, (req, res) => {
-  db.query("SELECT * FROM feedback ORDER BY id DESC", (err, rows) => {
-    if (err) {
-      console.error("Admin feedback error:", err);
+  db.query(
+    "SELECT * FROM feedback ORDER BY id DESC",
+    (err, rows) => {
+      if (err) {
+        console.error("Admin feedback error:", err);
 
-      return res.status(500).json({
-        success: false,
-        message: "Could not load feedback.",
+        return res.status(500).json({
+          success: false,
+          message: "Could not load feedback.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        feedback: rows,
       });
     }
-
-    return res.json({
-      success: true,
-      feedback: rows,
-    });
-  });
+  );
 });
 
 // SERVE REACT BUILD, IF AVAILABLE
@@ -377,11 +416,14 @@ app.use("/api", (req, res) => {
 
 // REACT FRONTEND FALLBACK (EXPRESS 5)
 app.get("/{*splat}", (req, res, next) => {
-  res.sendFile(path.join(buildPath, "index.html"), (err) => {
-    if (err) {
-      next(err);
+  res.sendFile(
+    path.join(buildPath, "index.html"),
+    (err) => {
+      if (err) {
+        next(err);
+      }
     }
-  });
+  );
 });
 
 // ERROR HANDLER
