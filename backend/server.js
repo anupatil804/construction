@@ -1,7 +1,9 @@
+
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const session = require("express-session");
+
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const app = express();
@@ -12,7 +14,10 @@ const PORT = process.env.PORT || 8080;
 const CLIENT_URL =
   process.env.CLIENT_URL || "https://construction-mocha.vercel.app";
 
-// CORS
+// Trust Railway's HTTPS proxy
+app.set("trust proxy", 1);
+
+// CORS configuration
 app.use(
   cors({
     origin: [
@@ -28,25 +33,24 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Session configuration
+// SESSION CONFIGURATION
 app.use(
   session({
     name: "admin_session",
-    secret:
-      process.env.ADMIN_SESSION_SECRET ||
-      "change-this-session-secret-before-production",
+    secret: process.env.ADMIN_SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    proxy: true,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      secure: true,
+      sameSite: "none",
       maxAge: 24 * 60 * 60 * 1000,
     },
   })
 );
 
-// Home and health-check routes
+// HOME ROUTE
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -54,6 +58,7 @@ app.get("/", (req, res) => {
   });
 });
 
+// TEST ROUTE
 app.get("/api/test", (req, res) => {
   res.json({
     success: true,
@@ -61,6 +66,7 @@ app.get("/api/test", (req, res) => {
   });
 });
 
+// HEALTH ROUTE
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
@@ -69,7 +75,6 @@ app.get("/api/health", (req, res) => {
 });
 
 // CONTACT FORM
-// Database columns: name, email, phone, project_type, message
 app.post("/api/contact", (req, res) => {
   const { name, email, phone, message } = req.body;
 
@@ -104,7 +109,7 @@ app.post("/api/contact", (req, res) => {
 
         return res.status(500).json({
           success: false,
-          message: "Could not save contact submission",
+          message: "Could not save contact submission.",
         });
       }
 
@@ -160,7 +165,7 @@ app.post("/api/feedback", (req, res) => {
 
         return res.status(500).json({
           success: false,
-          message: "Could not save feedback",
+          message: "Could not save feedback.",
         });
       }
 
@@ -174,7 +179,7 @@ app.post("/api/feedback", (req, res) => {
 });
 
 // ADMIN LOGIN
-app.post("/api/admin/login", (req, res) => {
+app.post("/api/admin/login", (req, res, next) => {
   const { username, password } = req.body;
 
   if (
@@ -203,13 +208,10 @@ app.post("/api/admin/login", (req, res) => {
     });
   }
 
-  req.session.admin = {
-    username: process.env.ADMIN_USERNAME,
-  };
-
-  req.session.save((err) => {
+  // Regenerate session after successful authentication
+  req.session.regenerate((err) => {
     if (err) {
-      console.error("Admin session error:", err);
+      console.error("Session regeneration error:", err);
 
       return res.status(500).json({
         success: false,
@@ -217,15 +219,34 @@ app.post("/api/admin/login", (req, res) => {
       });
     }
 
-    return res.json({
-      success: true,
-      message: "Admin login successful!",
+    req.session.admin = {
+      username: process.env.ADMIN_USERNAME,
+    };
+
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        console.error("Admin session save error:", saveErr);
+
+        return res.status(500).json({
+          success: false,
+          message: "Could not save admin session.",
+        });
+      }
+
+      res.set("Cache-Control", "no-store");
+
+      return res.json({
+        success: true,
+        message: "Admin login successful!",
+      });
     });
   });
 });
 
 // CHECK ADMIN SESSION
 app.get("/api/admin/session", (req, res) => {
+  res.set("Cache-Control", "no-store");
+
   if (!req.session.admin) {
     return res.status(401).json({
       success: false,
@@ -251,7 +272,12 @@ app.post("/api/admin/logout", (req, res) => {
       });
     }
 
-    res.clearCookie("admin_session");
+    res.clearCookie("admin_session", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+    });
 
     return res.json({
       success: true,
@@ -260,7 +286,7 @@ app.post("/api/admin/logout", (req, res) => {
   });
 });
 
-// Protect admin dashboard routes
+// PROTECT ADMIN ROUTES
 function requireAdmin(req, res, next) {
   if (!req.session.admin) {
     return res.status(401).json({
@@ -336,12 +362,12 @@ app.get("/api/admin/feedback", requireAdmin, (req, res) => {
   });
 });
 
-// Serve React build if it exists
+// SERVE REACT BUILD, IF AVAILABLE
 const buildPath = path.join(__dirname, "..", "build");
 
 app.use(express.static(buildPath));
 
-// Unknown API routes
+// UNKNOWN API ROUTES
 app.use("/api", (req, res) => {
   return res.status(404).json({
     success: false,
@@ -349,7 +375,7 @@ app.use("/api", (req, res) => {
   });
 });
 
-// React frontend fallback (Express 5)
+// REACT FRONTEND FALLBACK (EXPRESS 5)
 app.get("/{*splat}", (req, res, next) => {
   res.sendFile(path.join(buildPath, "index.html"), (err) => {
     if (err) {
@@ -358,7 +384,7 @@ app.get("/{*splat}", (req, res, next) => {
   });
 });
 
-// Error handler
+// ERROR HANDLER
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
 
@@ -372,7 +398,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
+// START SERVER
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
